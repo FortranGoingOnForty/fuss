@@ -143,11 +143,12 @@ contains
                 ! Skip if path is empty
                 if (len_trim(file_path) == 0) cycle
 
-                ! Skip directory-only entries (ending with /)
-                ! Git will report actual files inside, which will create the directory structure
+                ! Check if this is a directory entry (ending with /)
                 if (len_trim(file_path) > 0) then
                     if (file_path(len_trim(file_path):len_trim(file_path)) == '/') then
-                        cycle  ! Skip this entry entirely
+                        ! Directory entry - expand it to find all files inside
+                        call expand_directory(file_path, git_status, temp_files, n_files, max_files)
+                        cycle
                     end if
                 end if
 
@@ -272,6 +273,54 @@ contains
         array(1:old_size) = temp
         deallocate(temp)
     end subroutine resize_array
+
+    subroutine expand_directory(dir_path, git_status, files, n_files, max_files)
+        character(len=*), intent(in) :: dir_path, git_status
+        type(file_entry), allocatable, intent(inout) :: files(:)
+        integer, intent(inout) :: n_files, max_files
+        integer :: iostat, unit_num, status_code
+        character(len=1024) :: line, command
+        character(len=512) :: dir_no_slash
+
+        ! Remove trailing slash
+        dir_no_slash = dir_path(1:len_trim(dir_path)-1)
+
+        ! Use find to list all files in this directory
+        write(command, '(A,A,A)') 'find "', trim(dir_no_slash), '" -type f > /tmp/fuss_expand_dir.txt'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        if (status_code /= 0) return
+
+        open(newunit=unit_num, file='/tmp/fuss_expand_dir.txt', status='old', action='read', iostat=iostat)
+        if (iostat /= 0) return
+
+        do
+            read(unit_num, '(A)', iostat=iostat) line
+            if (iostat /= 0) exit
+
+            if (len_trim(line) > 0) then
+                ! Remove leading "./" if present
+                if (len(line) >= 2) then
+                    if (line(1:2) == './') line = line(3:)
+                end if
+
+                if (len_trim(line) == 0) cycle
+
+                n_files = n_files + 1
+                if (n_files > max_files) then
+                    max_files = max_files * 2
+                    call resize_array(files, max_files)
+                end if
+
+                files(n_files)%status = git_status
+                files(n_files)%path = trim(line)
+                files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
+                files(n_files)%is_unstaged = (git_status(2:2) /= ' ')
+            end if
+        end do
+
+        close(unit_num, status='delete')
+    end subroutine expand_directory
 
     subroutine display_tree(files, n_files)
         type(file_entry), intent(in) :: files(:)
