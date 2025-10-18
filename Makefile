@@ -1,50 +1,39 @@
-# Makefile for FUSS - Fortran Utility for Showing Status
-
-# Compiler and flags
+# Makefile for modular fuss
 FC = gfortran
-FFLAGS = -O2 -Wall -std=f2008
-DEBUGFLAGS = -g -O0 -Wall -std=f2008 -fbacktrace -fcheck=all
+FFLAGS = -O2 -Wall
+SRC_DIR = src
+BUILD_DIR = build
+BIN_DIR = .
+
+# Module files (order matters for dependencies)
+MODULES = types_module.f90 terminal_module.f90 git_module.f90 tree_module.f90 display_module.f90
+MODULE_OBJS = $(MODULES:%.f90=$(BUILD_DIR)/%.o)
+
+# Main program
+MAIN = fuss_main.f90
+MAIN_OBJ = $(BUILD_DIR)/fuss_main.o
 
 # Target executable
-TARGET = fuss
+TARGET = $(BIN_DIR)/fuss
 
-# Source files
-SOURCES = fuss.f90
+.PHONY: all clean
 
-# Object files
-OBJECTS = $(SOURCES:.f90=.o)
-
-# Default target
 all: $(TARGET)
 
-# Build executable
-$(TARGET): $(OBJECTS)
-	$(FC) $(FFLAGS) -o $(TARGET) $(OBJECTS)
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
-# Compile source files
-%.o: %.f90
-	$(FC) $(FFLAGS) -c $<
+# Build modules
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.f90 | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -c $< -o $@
 
-# Debug build
-debug: FFLAGS = $(DEBUGFLAGS)
-debug: clean $(TARGET)
+# Build main program
+$(MAIN_OBJ): $(SRC_DIR)/$(MAIN) $(MODULE_OBJS) | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -I$(BUILD_DIR) -c $< -o $@
 
-# Install target (optional)
-install: $(TARGET)
-	install -m 755 $(TARGET) /usr/local/bin/
+# Link everything
+$(TARGET): $(MODULE_OBJS) $(MAIN_OBJ)
+	$(FC) $(FFLAGS) -o $@ $^
 
-# Clean build artifacts
 clean:
-	rm -f $(OBJECTS) $(TARGET) *.mod
-	rm -f /tmp/fuss_*.txt
-
-# Run the program
-run: $(TARGET)
-	./$(TARGET)
-
-# Run with --all flag
-run-all: $(TARGET)
-	./$(TARGET) --all
-
-# Phony targets
-.PHONY: all clean install run run-all debug
+	rm -rf $(BUILD_DIR) $(TARGET)
