@@ -561,7 +561,7 @@ contains
 
         ! Print help
         print '(A)', ''
-        print '(A)', 'j/↓: down | k/↑: up | Space: git add | q: quit'
+        print '(A)', '↑=staged ✗=unstaged | j/↓: down | k/↑: up | Space: git add | q: quit'
 
         call free_tree(root)
     end subroutine draw_interactive_tree
@@ -613,18 +613,22 @@ contains
             ! Add name with highlighting if selected
             if (is_selected) then
                 line = trim(line) // highlight_on // trim(node%name)
+                ! Show both indicators if file has both staged and unstaged changes
+                if (node%is_staged) then
+                    line = trim(line) // mark_staged
+                end if
                 if (node%is_unstaged) then
                     line = trim(line) // mark_unstaged
-                else if (node%is_staged) then
-                    line = trim(line) // mark_staged
                 end if
                 line = trim(line) // highlight_off
             else
                 line = trim(line) // trim(node%name)
+                ! Show both indicators if file has both staged and unstaged changes
+                if (node%is_staged) then
+                    line = trim(line) // mark_staged
+                end if
                 if (node%is_unstaged) then
                     line = trim(line) // mark_unstaged
-                else if (node%is_staged) then
-                    line = trim(line) // mark_staged
                 end if
             end if
 
@@ -860,10 +864,12 @@ contains
             else
                 line = prefix // branch_mid // ' ' // trim(node%name)
             end if
+            ! Show both indicators if file has both staged and unstaged changes
+            if (node%is_staged) then
+                line = trim(line) // mark_staged
+            end if
             if (node%is_unstaged) then
                 line = trim(line) // mark_unstaged
-            else if (node%is_staged) then
-                line = trim(line) // mark_staged
             end if
             print '(A)', trim(line)
         end if
