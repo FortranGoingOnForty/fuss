@@ -6,7 +6,8 @@ program fuss
     type :: tree_node
         character(len=256) :: name
         logical :: is_file
-        logical :: is_dirty
+        logical :: is_staged
+        logical :: is_unstaged
         type(tree_node), pointer :: first_child => null()
         type(tree_node), pointer :: next_sibling => null()
     end type tree_node
@@ -14,12 +15,14 @@ program fuss
     type :: file_entry
         character(len=512) :: path
         character(len=2) :: status
-        logical :: is_dirty
+        logical :: is_staged
+        logical :: is_unstaged
     end type file_entry
 
     type :: selectable_item
         character(len=512) :: path
-        logical :: is_dirty
+        logical :: is_staged
+        logical :: is_unstaged
         logical :: is_file
     end type selectable_item
 
@@ -155,7 +158,9 @@ contains
 
                 temp_files(n_files)%status = git_status
                 temp_files(n_files)%path = trim(file_path)
-                temp_files(n_files)%is_dirty = .true.
+                ! Column 1 = staged status, Column 2 = unstaged status
+                temp_files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
+                temp_files(n_files)%is_unstaged = (git_status(2:2) /= ' ')
             end if
         end do
 
@@ -225,19 +230,22 @@ contains
                     call resize_array(temp_files, max_files)
                 end if
 
-                ! Check if file is dirty
+                ! Check if file is dirty and get status
                 is_dirty_file = .false.
                 temp_files(n_files)%status = '  '  ! Initialize as clean
+                temp_files(n_files)%is_staged = .false.
+                temp_files(n_files)%is_unstaged = .false.
                 do i = 1, n_dirty
                     if (trim(dirty_files(i)%path) == trim(line)) then
                         is_dirty_file = .true.
                         temp_files(n_files)%status = dirty_files(i)%status
+                        temp_files(n_files)%is_staged = dirty_files(i)%is_staged
+                        temp_files(n_files)%is_unstaged = dirty_files(i)%is_unstaged
                         exit
                     end if
                 end do
 
                 temp_files(n_files)%path = trim(line)
-                temp_files(n_files)%is_dirty = is_dirty_file
             end if
         end do
 
@@ -274,13 +282,14 @@ contains
         allocate(root)
         root%name = '.'
         root%is_file = .false.
-        root%is_dirty = .false.
+        root%is_staged = .false.
+        root%is_unstaged = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         ! Build tree
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_dirty)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged)
         end do
 
         ! Sort tree (directories first, then alphabetically)
@@ -297,7 +306,7 @@ contains
         logical, intent(in) :: show_all
         type(file_entry), allocatable :: files(:)
         type(selectable_item), allocatable :: items(:)
-        integer :: n_files, n_items, selected, i
+        integer :: n_files, n_items, selected, i, status
         character(len=1) :: key
         logical :: running
 
@@ -338,8 +347,8 @@ contains
                 if (selected < n_items) selected = selected + 1
             case ('k', 'A')  ! k or up arrow
                 if (selected > 1) selected = selected - 1
-            case (achar(10), achar(13))  ! Enter
-                if (items(selected)%is_file .and. items(selected)%is_dirty) then
+            case (achar(10), achar(13), ' ')  ! Enter or Space
+                if (items(selected)%is_file .and. items(selected)%is_unstaged) then
                     call git_add_file(items(selected)%path)
                     ! Refresh files after git add
                     if (show_all) then
@@ -377,12 +386,13 @@ contains
         allocate(root)
         root%name = '.'
         root%is_file = .false.
-        root%is_dirty = .false.
+        root%is_staged = .false.
+        root%is_unstaged = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_dirty)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged)
         end do
 
         call sort_tree(root)
@@ -429,7 +439,8 @@ contains
 
             items(n_items)%path = trim(full_path)
             items(n_items)%is_file = node%is_file
-            items(n_items)%is_dirty = node%is_dirty
+            items(n_items)%is_staged = node%is_staged
+            items(n_items)%is_unstaged = node%is_unstaged
         else
             full_path = ''
         end if
@@ -508,6 +519,16 @@ contains
 
         write(command, '(A,A,A)') 'git add "', trim(filepath), '"'
         call execute_command_line(trim(command), exitstat=status)
+
+        ! Show feedback at bottom of screen
+        if (status == 0) then
+            print '(A)', 'Staged: ' // trim(filepath)
+        else
+            print '(A)', 'Failed to stage: ' // trim(filepath)
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_add_file
 
     subroutine draw_interactive_tree(files, n_files, items, n_items, selected)
@@ -521,12 +542,13 @@ contains
         allocate(root)
         root%name = '.'
         root%is_file = .false.
-        root%is_dirty = .false.
+        root%is_staged = .false.
+        root%is_unstaged = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_dirty)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged)
         end do
 
         call sort_tree(root)
@@ -539,7 +561,7 @@ contains
 
         ! Print help
         print '(A)', ''
-        print '(A)', 'j/↓: down | k/↑: up | Enter: git add | q: quit'
+        print '(A)', 'j/↓: down | k/↑: up | Space: git add | q: quit'
 
         call free_tree(root)
     end subroutine draw_interactive_tree
@@ -562,7 +584,8 @@ contains
         character(len=*), parameter :: branch_last = '└──'
         character(len=*), parameter :: branch_mid = '├──'
         character(len=*), parameter :: vertical = '│'
-        character(len=*), parameter :: cross_mark = ' ✗'
+        character(len=*), parameter :: mark_unstaged = ' ✗'
+        character(len=*), parameter :: mark_staged = ' ↑'
         character(len=*), parameter :: highlight_on = achar(27) // '[7m'
         character(len=*), parameter :: highlight_off = achar(27) // '[0m'
 
@@ -590,11 +613,19 @@ contains
             ! Add name with highlighting if selected
             if (is_selected) then
                 line = trim(line) // highlight_on // trim(node%name)
-                if (node%is_dirty) line = trim(line) // cross_mark
+                if (node%is_unstaged) then
+                    line = trim(line) // mark_unstaged
+                else if (node%is_staged) then
+                    line = trim(line) // mark_staged
+                end if
                 line = trim(line) // highlight_off
             else
                 line = trim(line) // trim(node%name)
-                if (node%is_dirty) line = trim(line) // cross_mark
+                if (node%is_unstaged) then
+                    line = trim(line) // mark_unstaged
+                else if (node%is_staged) then
+                    line = trim(line) // mark_staged
+                end if
             end if
 
             print '(A)', trim(line)
@@ -706,10 +737,10 @@ contains
         before = (trim(a%name) < trim(b%name))
     end function should_insert_before
 
-    recursive subroutine add_to_tree(node, path, is_dirty)
+    recursive subroutine add_to_tree(node, path, is_staged, is_unstaged)
         type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: path
-        logical, intent(in) :: is_dirty
+        logical, intent(in) :: is_staged, is_unstaged
 
         integer :: slash_pos, iostat
         character(len=512) :: first_part, rest
@@ -726,7 +757,8 @@ contains
             ! Check if already exists
             do while (associated(child))
                 if (trim(child%name) == trim(path)) then
-                    child%is_dirty = child%is_dirty .or. is_dirty
+                    child%is_staged = child%is_staged .or. is_staged
+                    child%is_unstaged = child%is_unstaged .or. is_unstaged
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -750,7 +782,8 @@ contains
             allocate(new_child)
             new_child%name = trim(path)
             new_child%is_file = .not. is_directory
-            new_child%is_dirty = is_dirty
+            new_child%is_staged = is_staged
+            new_child%is_unstaged = is_unstaged
             new_child%first_child => null()
             new_child%next_sibling => null()
 
@@ -768,7 +801,7 @@ contains
             child => node%first_child
             do while (associated(child))
                 if (trim(child%name) == trim(first_part)) then
-                    call add_to_tree(child, rest, is_dirty)
+                    call add_to_tree(child, rest, is_staged, is_unstaged)
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -779,7 +812,8 @@ contains
             allocate(new_child)
             new_child%name = trim(first_part)
             new_child%is_file = .false.
-            new_child%is_dirty = .false.
+            new_child%is_staged = .false.
+            new_child%is_unstaged = .false.
             new_child%first_child => null()
             new_child%next_sibling => null()
 
@@ -789,7 +823,7 @@ contains
                 child%next_sibling => new_child
             end if
 
-            call add_to_tree(new_child, rest, is_dirty)
+            call add_to_tree(new_child, rest, is_staged, is_unstaged)
         end if
     end subroutine add_to_tree
 
@@ -807,7 +841,8 @@ contains
         character(len=*), parameter :: branch_last = '└──'
         character(len=*), parameter :: branch_mid = '├──'
         character(len=*), parameter :: vertical = '│'
-        character(len=*), parameter :: cross_mark = ' ✗'
+        character(len=*), parameter :: mark_unstaged = ' ✗'
+        character(len=*), parameter :: mark_staged = ' ↑'
 
         ! Count children first
         n_children = 0
@@ -825,8 +860,10 @@ contains
             else
                 line = prefix // branch_mid // ' ' // trim(node%name)
             end if
-            if (node%is_dirty) then
-                line = trim(line) // cross_mark
+            if (node%is_unstaged) then
+                line = trim(line) // mark_unstaged
+            else if (node%is_staged) then
+                line = trim(line) // mark_staged
             end if
             print '(A)', trim(line)
         end if
