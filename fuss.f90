@@ -56,7 +56,7 @@ contains
 
         do i = 1, nargs
             call get_command_argument(i, arg)
-            if (trim(arg) == '--all') then
+            if (trim(arg) == '--all' .or. trim(arg) == '-a') then
                 show_all = .true.
             else if (trim(arg) == '-i' .or. trim(arg) == '--interactive') then
                 interactive = .true.
