@@ -17,33 +17,46 @@ program fuss
         logical :: is_dirty
     end type file_entry
 
+    type :: selectable_item
+        character(len=512) :: path
+        logical :: is_dirty
+        logical :: is_file
+    end type selectable_item
+
     ! Main program variables
-    logical :: show_all
+    logical :: show_all, interactive
     character(len=:), allocatable :: root_path
 
     ! Parse command line arguments
-    call parse_arguments(show_all)
+    call parse_arguments(show_all, interactive)
 
     ! Get current directory
     call get_current_dir(root_path)
 
     ! Build and display tree
-    call build_and_display_tree(root_path, show_all)
+    if (interactive) then
+        call interactive_mode(show_all)
+    else
+        call build_and_display_tree(root_path, show_all)
+    end if
 
 contains
 
-    subroutine parse_arguments(show_all)
-        logical, intent(out) :: show_all
+    subroutine parse_arguments(show_all, interactive)
+        logical, intent(out) :: show_all, interactive
         integer :: i, nargs
         character(len=256) :: arg
 
         show_all = .false.
+        interactive = .false.
         nargs = command_argument_count()
 
         do i = 1, nargs
             call get_command_argument(i, arg)
             if (trim(arg) == '--all') then
                 show_all = .true.
+            else if (trim(arg) == '-i' .or. trim(arg) == '--interactive') then
+                interactive = .true.
             end if
         end do
     end subroutine parse_arguments
@@ -126,6 +139,13 @@ contains
 
                 ! Skip if path is empty
                 if (len_trim(file_path) == 0) cycle
+
+                ! Remove trailing slash if it's a directory
+                if (len_trim(file_path) > 0) then
+                    if (file_path(len_trim(file_path):len_trim(file_path)) == '/') then
+                        file_path = file_path(1:len_trim(file_path)-1)
+                    end if
+                end if
 
                 n_files = n_files + 1
                 if (n_files > max_files) then
@@ -273,6 +293,335 @@ contains
         call free_tree(root)
     end subroutine display_tree
 
+    subroutine interactive_mode(show_all)
+        logical, intent(in) :: show_all
+        type(file_entry), allocatable :: files(:)
+        type(selectable_item), allocatable :: items(:)
+        integer :: n_files, n_items, selected, i
+        character(len=1) :: key
+        logical :: running
+
+        ! Get files
+        if (show_all) then
+            call get_all_files(files, n_files)
+        else
+            call get_dirty_files(files, n_files)
+        end if
+
+        if (n_files == 0) then
+            print '(A)', 'No files to display'
+            return
+        end if
+
+        ! Build flat list of items for navigation
+        call build_item_list(files, n_files, items, n_items)
+
+        ! Initialize selection
+        selected = 1
+        running = .true.
+
+        ! Enable raw terminal mode
+        call enable_raw_mode()
+
+        ! Main interactive loop
+        do while (running)
+            ! Clear screen and redraw
+            call clear_screen()
+            call draw_interactive_tree(files, n_files, items, n_items, selected)
+
+            ! Read key
+            call read_key(key)
+
+            ! Handle input
+            select case (key)
+            case ('j', 'B')  ! j or down arrow
+                if (selected < n_items) selected = selected + 1
+            case ('k', 'A')  ! k or up arrow
+                if (selected > 1) selected = selected - 1
+            case (achar(10), achar(13))  ! Enter
+                if (items(selected)%is_file .and. items(selected)%is_dirty) then
+                    call git_add_file(items(selected)%path)
+                    ! Refresh files after git add
+                    if (show_all) then
+                        call get_all_files(files, n_files)
+                    else
+                        call get_dirty_files(files, n_files)
+                    end if
+                    call build_item_list(files, n_files, items, n_items)
+                    if (selected > n_items .and. n_items > 0) selected = n_items
+                    if (n_items == 0) running = .false.
+                end if
+            case ('q', 'Q')  ! Quit
+                running = .false.
+            end select
+        end do
+
+        ! Restore terminal
+        call disable_raw_mode()
+
+        ! Final display
+        call clear_screen()
+        call build_and_display_tree('', show_all)
+    end subroutine interactive_mode
+
+    subroutine build_item_list(files, n_files, items, n_items)
+        type(file_entry), intent(in) :: files(:)
+        integer, intent(in) :: n_files
+        type(selectable_item), allocatable, intent(out) :: items(:)
+        integer, intent(out) :: n_items
+        type(tree_node), pointer :: root
+        type(selectable_item), allocatable :: temp_items(:)
+        integer :: i, max_items
+
+        ! Build the tree first
+        allocate(root)
+        root%name = '.'
+        root%is_file = .false.
+        root%is_dirty = .false.
+        root%first_child => null()
+        root%next_sibling => null()
+
+        do i = 1, n_files
+            call add_to_tree(root, files(i)%path, files(i)%is_dirty)
+        end do
+
+        call sort_tree(root)
+
+        ! Collect items from tree in traversal order
+        max_items = 1000
+        allocate(temp_items(max_items))
+        n_items = 0
+
+        ! Traverse tree and collect all items (files and directories)
+        call collect_items_from_tree(root, '', temp_items, n_items, max_items)
+
+        ! Copy to output
+        allocate(items(n_items))
+        if (n_items > 0) items(1:n_items) = temp_items(1:n_items)
+        deallocate(temp_items)
+
+        call free_tree(root)
+    end subroutine build_item_list
+
+    recursive subroutine collect_items_from_tree(node, parent_path, items, n_items, max_items)
+        type(tree_node), pointer, intent(in) :: node
+        character(len=*), intent(in) :: parent_path
+        type(selectable_item), allocatable, intent(inout) :: items(:)
+        integer, intent(inout) :: n_items, max_items
+        type(tree_node), pointer :: child
+        character(len=512) :: full_path
+
+        ! Skip root node
+        if (len_trim(parent_path) > 0 .or. trim(node%name) /= '.') then
+            ! Build full path
+            if (len_trim(parent_path) == 0) then
+                full_path = trim(node%name)
+            else
+                full_path = trim(parent_path) // '/' // trim(node%name)
+            end if
+
+            ! Add this item
+            n_items = n_items + 1
+            if (n_items > max_items) then
+                ! Resize array
+                call resize_item_array(items, max_items)
+            end if
+
+            items(n_items)%path = trim(full_path)
+            items(n_items)%is_file = node%is_file
+            items(n_items)%is_dirty = node%is_dirty
+        else
+            full_path = ''
+        end if
+
+        ! Recursively add children
+        child => node%first_child
+        do while (associated(child))
+            call collect_items_from_tree(child, full_path, items, n_items, max_items)
+            child => child%next_sibling
+        end do
+    end subroutine collect_items_from_tree
+
+    subroutine resize_item_array(items, max_items)
+        type(selectable_item), allocatable, intent(inout) :: items(:)
+        integer, intent(inout) :: max_items
+        type(selectable_item), allocatable :: temp_items(:)
+        integer :: old_size
+
+        old_size = max_items
+        allocate(temp_items(old_size))
+        temp_items = items(1:old_size)
+        deallocate(items)
+        max_items = max_items * 2
+        allocate(items(max_items))
+        items(1:old_size) = temp_items
+        deallocate(temp_items)
+    end subroutine resize_item_array
+
+    subroutine clear_screen()
+        ! ANSI escape code to clear screen and move cursor to top
+        print '(A)', achar(27) // '[2J' // achar(27) // '[H'
+    end subroutine clear_screen
+
+    subroutine enable_raw_mode()
+        integer :: status
+        ! Use stty cbreak mode (processes newlines correctly) instead of raw
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine enable_raw_mode
+
+    subroutine disable_raw_mode()
+        integer :: status
+        ! Restore terminal
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+    end subroutine disable_raw_mode
+
+    subroutine read_key(key)
+        character(len=1), intent(out) :: key
+        character(len=3) :: escape_seq
+        integer :: iostat, tty_unit
+
+        ! Open /dev/tty for reading
+        open(newunit=tty_unit, file='/dev/tty', status='old', action='read', iostat=iostat)
+        if (iostat /= 0) then
+            key = 'q'  ! If we can't open tty, quit
+            return
+        end if
+
+        ! Read one character
+        read(tty_unit, '(A1)', iostat=iostat, advance='no') key
+
+        ! Check for escape sequence (arrow keys)
+        if (key == achar(27)) then
+            read(tty_unit, '(A2)', iostat=iostat, advance='no') escape_seq
+            if (escape_seq(1:1) == '[') then
+                key = escape_seq(2:2)  ! Return A, B, C, or D
+            end if
+        end if
+
+        close(tty_unit)
+    end subroutine read_key
+
+    subroutine git_add_file(filepath)
+        character(len=*), intent(in) :: filepath
+        character(len=1024) :: command
+        integer :: status
+
+        write(command, '(A,A,A)') 'git add "', trim(filepath), '"'
+        call execute_command_line(trim(command), exitstat=status)
+    end subroutine git_add_file
+
+    subroutine draw_interactive_tree(files, n_files, items, n_items, selected)
+        type(file_entry), intent(in) :: files(:)
+        integer, intent(in) :: n_files, n_items, selected
+        type(selectable_item), intent(in) :: items(:)
+        type(tree_node), pointer :: root
+        integer :: i, item_idx
+
+        ! Build tree
+        allocate(root)
+        root%name = '.'
+        root%is_file = .false.
+        root%is_dirty = .false.
+        root%first_child => null()
+        root%next_sibling => null()
+
+        do i = 1, n_files
+            call add_to_tree(root, files(i)%path, files(i)%is_dirty)
+        end do
+
+        call sort_tree(root)
+
+        ! Print tree with selection highlighting
+        item_idx = 0
+        print '(A)', '.'
+        call print_interactive_node(root, '', .true., .true., items, &
+                                   selected, item_idx)
+
+        ! Print help
+        print '(A)', ''
+        print '(A)', 'j/↓: down | k/↑: up | Enter: git add | q: quit'
+
+        call free_tree(root)
+    end subroutine draw_interactive_tree
+
+    recursive subroutine print_interactive_node(node, prefix, is_last, &
+                                               is_root, items, selected, item_idx)
+        type(tree_node), pointer, intent(in) :: node
+        character(len=*), intent(in) :: prefix
+        logical, intent(in) :: is_last, is_root
+        type(selectable_item), intent(in) :: items(:)
+        integer, intent(in) :: selected
+        integer, intent(inout) :: item_idx
+
+        character(len=1024) :: line
+        character(len=:), allocatable :: new_prefix
+        type(tree_node), pointer :: child
+        integer :: n_children, i
+        logical :: is_selected
+
+        character(len=*), parameter :: branch_last = '└──'
+        character(len=*), parameter :: branch_mid = '├──'
+        character(len=*), parameter :: vertical = '│'
+        character(len=*), parameter :: cross_mark = ' ✗'
+        character(len=*), parameter :: highlight_on = achar(27) // '[7m'
+        character(len=*), parameter :: highlight_off = achar(27) // '[0m'
+
+        ! Count children first
+        n_children = 0
+        child => node%first_child
+        do while (associated(child))
+            n_children = n_children + 1
+            child => child%next_sibling
+        end do
+
+        ! Don't print root node
+        if (.not. is_root) then
+            ! Increment item index for all nodes (files and directories)
+            item_idx = item_idx + 1
+            is_selected = (item_idx == selected)
+
+            ! Build line with appropriate branch character (exactly like print_tree_node)
+            if (is_last) then
+                line = prefix // branch_last // ' '
+            else
+                line = prefix // branch_mid // ' '
+            end if
+
+            ! Add name with highlighting if selected
+            if (is_selected) then
+                line = trim(line) // highlight_on // trim(node%name)
+                if (node%is_dirty) line = trim(line) // cross_mark
+                line = trim(line) // highlight_off
+            else
+                line = trim(line) // trim(node%name)
+                if (node%is_dirty) line = trim(line) // cross_mark
+            end if
+
+            print '(A)', trim(line)
+        end if
+
+        ! Print children
+        i = 0
+        child => node%first_child
+        do while (associated(child))
+            i = i + 1
+
+            if (is_root) then
+                new_prefix = ''
+            else
+                if (is_last) then
+                    new_prefix = prefix // '    '
+                else
+                    new_prefix = prefix // vertical // '   '
+                end if
+            end if
+
+            call print_interactive_node(child, new_prefix, i == n_children, &
+                                       .false., items, selected, item_idx)
+            child => child%next_sibling
+        end do
+    end subroutine print_interactive_node
+
     recursive subroutine sort_tree(node)
         type(tree_node), pointer :: node
         type(tree_node), pointer :: child
@@ -362,15 +711,16 @@ contains
         character(len=*), intent(in) :: path
         logical, intent(in) :: is_dirty
 
-        integer :: slash_pos
+        integer :: slash_pos, iostat
         character(len=512) :: first_part, rest
         type(tree_node), pointer :: child, new_child
+        logical :: is_directory
 
         ! Find first slash
         slash_pos = index(path, '/')
 
         if (slash_pos == 0) then
-            ! This is a file in current directory - add as child
+            ! This could be a file or a directory in current directory
             child => node%first_child
 
             ! Check if already exists
@@ -383,10 +733,23 @@ contains
                 child => child%next_sibling
             end do
 
+            ! Check if this is a directory (simple check if path exists as dir)
+            inquire(file=trim(path), exist=is_directory, iostat=iostat)
+            if (iostat /= 0) is_directory = .false.
+
+            ! If the name matches common directory patterns or actually is a dir, treat as directory
+            ! Otherwise treat as file
+            if (is_directory) then
+                call execute_command_line('test -d "' // trim(path) // '"', exitstat=iostat)
+                is_directory = (iostat == 0)
+            else
+                is_directory = .false.
+            end if
+
             ! Add new child
             allocate(new_child)
             new_child%name = trim(path)
-            new_child%is_file = .true.
+            new_child%is_file = .not. is_directory
             new_child%is_dirty = is_dirty
             new_child%first_child => null()
             new_child%next_sibling => null()
