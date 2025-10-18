@@ -46,4 +46,22 @@ contains
         close(tty_unit)
     end subroutine read_key
 
+    subroutine read_line(prompt, line)
+        character(len=*), intent(in) :: prompt
+        character(len=*), intent(out) :: line
+        integer :: status, iostat
+
+        ! Show prompt
+        print '(A)', trim(prompt)
+
+        ! Temporarily restore canonical mode for line input
+        call execute_command_line('stty icanon echo < /dev/tty', exitstat=status)
+
+        ! Read line from terminal
+        read(*, '(A)', iostat=iostat) line
+
+        ! Restore cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine read_line
+
 end module terminal_module

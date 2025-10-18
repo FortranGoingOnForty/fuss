@@ -248,4 +248,93 @@ contains
         call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_add_file
 
+    subroutine git_unstage_file(filepath)
+        character(len=*), intent(in) :: filepath
+        character(len=1024) :: command
+        integer :: status
+
+        write(command, '(A,A,A)') 'git restore --staged "', trim(filepath), '"'
+        call execute_command_line(trim(command), exitstat=status)
+
+        ! Show feedback
+        if (status == 0) then
+            print '(A)', 'Unstaged: ' // trim(filepath)
+        else
+            print '(A)', 'Failed to unstage: ' // trim(filepath)
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 0.5', exitstat=status)
+    end subroutine git_unstage_file
+
+    subroutine git_commit_with_message(message, success)
+        character(len=*), intent(in) :: message
+        logical, intent(out) :: success
+        character(len=2048) :: command
+        integer :: status
+
+        ! Build git commit command with message
+        write(command, '(A,A,A)') 'git commit -m "', trim(message), '"'
+        call execute_command_line(trim(command), exitstat=status)
+
+        success = (status == 0)
+
+        ! Show feedback
+        if (success) then
+            print '(A)', achar(27) // '[32m✓ Committed successfully!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Commit failed (nothing staged?)' // achar(27) // '[0m'
+        end if
+
+        print '(A)', 'Press any key to continue...'
+    end subroutine git_commit_with_message
+
+    subroutine get_git_status_output(status_lines, n_lines, max_lines)
+        character(len=512), allocatable, intent(out) :: status_lines(:)
+        integer, intent(out) :: n_lines
+        integer, intent(in) :: max_lines
+        integer :: iostat, unit_num, status_code
+        character(len=512) :: line
+        character(len=512), allocatable :: temp_lines(:)
+
+        allocate(temp_lines(max_lines))
+        n_lines = 0
+
+        ! Execute git status
+        call execute_command_line('git status > /tmp/fuss_full_status.txt', exitstat=status_code)
+
+        if (status_code /= 0) then
+            allocate(status_lines(1))
+            status_lines(1) = 'Error: Not a git repository'
+            n_lines = 1
+            return
+        end if
+
+        ! Read git status output
+        open(newunit=unit_num, file='/tmp/fuss_full_status.txt', status='old', action='read', iostat=iostat)
+
+        if (iostat /= 0) then
+            allocate(status_lines(1))
+            status_lines(1) = 'Error reading git status'
+            n_lines = 1
+            return
+        end if
+
+        do
+            read(unit_num, '(A)', iostat=iostat) line
+            if (iostat /= 0) exit
+
+            n_lines = n_lines + 1
+            if (n_lines > max_lines) exit
+            temp_lines(n_lines) = trim(line)
+        end do
+
+        close(unit_num, status='delete')
+
+        ! Copy to output
+        allocate(status_lines(n_lines))
+        if (n_lines > 0) status_lines(1:n_lines) = temp_lines(1:n_lines)
+        deallocate(temp_lines)
+    end subroutine get_git_status_output
+
 end module git_module

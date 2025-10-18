@@ -126,7 +126,7 @@ contains
                 if (selected < n_items) selected = selected + 1
             case ('k', 'A')  ! k or up arrow
                 if (selected > 1) selected = selected - 1
-            case (achar(10), achar(13), ' ')  ! Enter or Space
+            case ('a')  ! Stage file (lowercase to avoid conflict with arrow A)
                 if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call git_add_file(items(selected)%path)
                     ! Refresh files after git add
@@ -139,6 +139,30 @@ contains
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
+            case ('u')  ! Unstage file (lowercase)
+                if (items(selected)%is_file .and. items(selected)%is_staged) then
+                    call git_unstage_file(items(selected)%path)
+                    ! Refresh files after git unstage
+                    if (show_all) then
+                        call get_all_files(files, n_files)
+                    else
+                        call get_dirty_files(files, n_files)
+                    end if
+                    call build_item_list(files, n_files, items, n_items)
+                    if (selected > n_items .and. n_items > 0) selected = n_items
+                end if
+            case ('m')  ! Commit (lowercase)
+                call commit_prompt()
+                ! Refresh files after commit
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call build_item_list(files, n_files, items, n_items)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('s')  ! Show git status (lowercase)
+                call show_status_view()
             case ('q', 'Q')  ! Quit
                 running = .false.
             end select
@@ -248,5 +272,45 @@ contains
         items(1:old_size) = temp_items
         deallocate(temp_items)
     end subroutine resize_item_array
+
+    subroutine commit_prompt()
+        character(len=512) :: commit_msg
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for commit prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mGit Commit' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Read commit message
+        call read_line('Commit message: ', commit_msg)
+
+        ! Execute commit if message is not empty
+        if (len_trim(commit_msg) > 0) then
+            call git_commit_with_message(commit_msg, success)
+
+            ! Wait for keypress to continue
+            call read_key(key)
+        end if
+    end subroutine commit_prompt
+
+    subroutine show_status_view()
+        character(len=512), allocatable :: status_lines(:)
+        integer :: n_lines
+        character(len=1) :: key
+
+        ! Get git status output
+        call get_git_status_output(status_lines, n_lines, 100)
+
+        ! Display status view
+        call draw_status_view(status_lines, n_lines)
+
+        ! Wait for keypress to return
+        call read_key(key)
+
+        ! Cleanup
+        if (allocated(status_lines)) deallocate(status_lines)
+    end subroutine show_status_view
 
 end program fuss
