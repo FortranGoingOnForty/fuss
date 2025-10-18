@@ -561,7 +561,9 @@ contains
 
         ! Print help
         print '(A)', ''
-        print '(A)', '↑=staged ✗=unstaged | j/↓: down | k/↑: up | Space: git add | q: quit'
+        print '(A)', achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
+                     achar(27) // '[31m✗' // achar(27) // '[0m=unstaged | ' // &
+                     'j/↓: down | k/↑: up | Space: git add | q: quit'
 
         call free_tree(root)
     end subroutine draw_interactive_tree
@@ -584,10 +586,17 @@ contains
         character(len=*), parameter :: branch_last = '└──'
         character(len=*), parameter :: branch_mid = '├──'
         character(len=*), parameter :: vertical = '│'
-        character(len=*), parameter :: mark_unstaged = ' ✗'
-        character(len=*), parameter :: mark_staged = ' ↑'
         character(len=*), parameter :: highlight_on = achar(27) // '[7m'
         character(len=*), parameter :: highlight_off = achar(27) // '[0m'
+        character(len=1), parameter :: ESC = achar(27)
+
+        ! Build colored marks as character arrays
+        character(len=50) :: mark_unstaged
+        character(len=50) :: mark_staged
+
+        ! Initialize colored marks with explicit ESC characters
+        write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'
+        write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'
 
         ! Count children first
         n_children = 0
@@ -615,20 +624,20 @@ contains
                 line = trim(line) // highlight_on // trim(node%name)
                 ! Show both indicators if file has both staged and unstaged changes
                 if (node%is_staged) then
-                    line = trim(line) // mark_staged
+                    line = trim(line) // trim(mark_staged)
                 end if
                 if (node%is_unstaged) then
-                    line = trim(line) // mark_unstaged
+                    line = trim(line) // trim(mark_unstaged)
                 end if
                 line = trim(line) // highlight_off
             else
                 line = trim(line) // trim(node%name)
                 ! Show both indicators if file has both staged and unstaged changes
                 if (node%is_staged) then
-                    line = trim(line) // mark_staged
+                    line = trim(line) // trim(mark_staged)
                 end if
                 if (node%is_unstaged) then
-                    line = trim(line) // mark_unstaged
+                    line = trim(line) // trim(mark_unstaged)
                 end if
             end if
 
@@ -845,8 +854,15 @@ contains
         character(len=*), parameter :: branch_last = '└──'
         character(len=*), parameter :: branch_mid = '├──'
         character(len=*), parameter :: vertical = '│'
-        character(len=*), parameter :: mark_unstaged = ' ✗'
-        character(len=*), parameter :: mark_staged = ' ↑'
+        character(len=1), parameter :: ESC = achar(27)
+
+        ! Build colored marks as character arrays
+        character(len=50) :: mark_unstaged
+        character(len=50) :: mark_staged
+
+        ! Initialize colored marks with explicit ESC characters
+        write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'
+        write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'
 
         ! Count children first
         n_children = 0
@@ -866,10 +882,10 @@ contains
             end if
             ! Show both indicators if file has both staged and unstaged changes
             if (node%is_staged) then
-                line = trim(line) // mark_staged
+                line = trim(line) // trim(mark_staged)
             end if
             if (node%is_unstaged) then
-                line = trim(line) // mark_unstaged
+                line = trim(line) // trim(mark_unstaged)
             end if
             print '(A)', trim(line)
         end if
