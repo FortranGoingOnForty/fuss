@@ -8,6 +8,7 @@ program fuss
         logical :: is_file
         logical :: is_staged
         logical :: is_unstaged
+        logical :: is_untracked
         type(tree_node), pointer :: first_child => null()
         type(tree_node), pointer :: next_sibling => null()
     end type tree_node
@@ -17,12 +18,14 @@ program fuss
         character(len=2) :: status
         logical :: is_staged
         logical :: is_unstaged
+        logical :: is_untracked
     end type file_entry
 
     type :: selectable_item
         character(len=512) :: path
         logical :: is_staged
         logical :: is_unstaged
+        logical :: is_untracked
         logical :: is_file
     end type selectable_item
 
@@ -161,8 +164,9 @@ contains
                 temp_files(n_files)%status = git_status
                 temp_files(n_files)%path = trim(file_path)
                 ! Column 1 = staged status, Column 2 = unstaged status
+                temp_files(n_files)%is_untracked = (git_status == '??')
                 temp_files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
-                temp_files(n_files)%is_unstaged = (git_status(2:2) /= ' ')
+                temp_files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. temp_files(n_files)%is_untracked)
             end if
         end do
 
@@ -237,12 +241,14 @@ contains
                 temp_files(n_files)%status = '  '  ! Initialize as clean
                 temp_files(n_files)%is_staged = .false.
                 temp_files(n_files)%is_unstaged = .false.
+                temp_files(n_files)%is_untracked = .false.
                 do i = 1, n_dirty
                     if (trim(dirty_files(i)%path) == trim(line)) then
                         is_dirty_file = .true.
                         temp_files(n_files)%status = dirty_files(i)%status
                         temp_files(n_files)%is_staged = dirty_files(i)%is_staged
                         temp_files(n_files)%is_unstaged = dirty_files(i)%is_unstaged
+                        temp_files(n_files)%is_untracked = dirty_files(i)%is_untracked
                         exit
                     end if
                 end do
@@ -314,8 +320,9 @@ contains
 
                 files(n_files)%status = git_status
                 files(n_files)%path = trim(line)
+                files(n_files)%is_untracked = (git_status == '??')
                 files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
-                files(n_files)%is_unstaged = (git_status(2:2) /= ' ')
+                files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. files(n_files)%is_untracked)
             end if
         end do
 
@@ -334,12 +341,13 @@ contains
         root%is_file = .false.
         root%is_staged = .false.
         root%is_unstaged = .false.
+        root%is_untracked = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         ! Build tree
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
         end do
 
         ! Sort tree (directories first, then alphabetically)
@@ -398,7 +406,7 @@ contains
             case ('k', 'A')  ! k or up arrow
                 if (selected > 1) selected = selected - 1
             case (achar(10), achar(13), ' ')  ! Enter or Space
-                if (items(selected)%is_file .and. items(selected)%is_unstaged) then
+                if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call git_add_file(items(selected)%path)
                     ! Refresh files after git add
                     if (show_all) then
@@ -438,11 +446,12 @@ contains
         root%is_file = .false.
         root%is_staged = .false.
         root%is_unstaged = .false.
+        root%is_untracked = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
         end do
 
         call sort_tree(root)
@@ -491,6 +500,7 @@ contains
             items(n_items)%is_file = node%is_file
             items(n_items)%is_staged = node%is_staged
             items(n_items)%is_unstaged = node%is_unstaged
+            items(n_items)%is_untracked = node%is_untracked
         else
             full_path = ''
         end if
@@ -594,11 +604,12 @@ contains
         root%is_file = .false.
         root%is_staged = .false.
         root%is_unstaged = .false.
+        root%is_untracked = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
         end do
 
         call sort_tree(root)
@@ -612,8 +623,9 @@ contains
         ! Print help
         print '(A)', ''
         print '(A)', achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
-                     achar(27) // '[31m✗' // achar(27) // '[0m=unstaged | ' // &
-                     'j/↓: down | k/↑: up | Space: git add | q: quit'
+                     achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
+                     achar(27) // '[90m✗' // achar(27) // '[0m=untracked'
+        print '(A)', 'j/↓: down | k/↑: up | Space: stage file | q: quit'
 
         call free_tree(root)
     end subroutine draw_interactive_tree
@@ -642,11 +654,13 @@ contains
 
         ! Build colored marks as character arrays
         character(len=50) :: mark_unstaged
+        character(len=50) :: mark_untracked
         character(len=50) :: mark_staged
 
         ! Initialize colored marks with explicit ESC characters
-        write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'
-        write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'
+        write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'  ! Red for modified
+        write(mark_untracked, '(A,A,A,A,A)') ESC, '[90m', ' ✗', ESC, '[0m'  ! Dim grey for untracked
+        write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'  ! Green for staged
 
         ! Count children first
         n_children = 0
@@ -672,22 +686,28 @@ contains
             ! Add name with highlighting if selected
             if (is_selected) then
                 line = trim(line) // highlight_on // trim(node%name)
-                ! Show both indicators if file has both staged and unstaged changes
+                ! Show all applicable indicators
                 if (node%is_staged) then
                     line = trim(line) // trim(mark_staged)
                 end if
                 if (node%is_unstaged) then
                     line = trim(line) // trim(mark_unstaged)
+                end if
+                if (node%is_untracked) then
+                    line = trim(line) // trim(mark_untracked)
                 end if
                 line = trim(line) // highlight_off
             else
                 line = trim(line) // trim(node%name)
-                ! Show both indicators if file has both staged and unstaged changes
+                ! Show all applicable indicators
                 if (node%is_staged) then
                     line = trim(line) // trim(mark_staged)
                 end if
                 if (node%is_unstaged) then
                     line = trim(line) // trim(mark_unstaged)
+                end if
+                if (node%is_untracked) then
+                    line = trim(line) // trim(mark_untracked)
                 end if
             end if
 
@@ -800,10 +820,10 @@ contains
         before = (trim(a%name) < trim(b%name))
     end function should_insert_before
 
-    recursive subroutine add_to_tree(node, path, is_staged, is_unstaged)
+    recursive subroutine add_to_tree(node, path, is_staged, is_unstaged, is_untracked)
         type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: path
-        logical, intent(in) :: is_staged, is_unstaged
+        logical, intent(in) :: is_staged, is_unstaged, is_untracked
 
         integer :: slash_pos, iostat
         character(len=512) :: first_part, rest
@@ -822,6 +842,7 @@ contains
                 if (trim(child%name) == trim(path)) then
                     child%is_staged = child%is_staged .or. is_staged
                     child%is_unstaged = child%is_unstaged .or. is_unstaged
+                    child%is_untracked = child%is_untracked .or. is_untracked
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -847,6 +868,7 @@ contains
             new_child%is_file = .not. is_directory
             new_child%is_staged = is_staged
             new_child%is_unstaged = is_unstaged
+            new_child%is_untracked = is_untracked
             new_child%first_child => null()
             new_child%next_sibling => null()
 
@@ -864,7 +886,7 @@ contains
             child => node%first_child
             do while (associated(child))
                 if (trim(child%name) == trim(first_part)) then
-                    call add_to_tree(child, rest, is_staged, is_unstaged)
+                    call add_to_tree(child, rest, is_staged, is_unstaged, is_untracked)
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -877,6 +899,7 @@ contains
             new_child%is_file = .false.
             new_child%is_staged = .false.
             new_child%is_unstaged = .false.
+            new_child%is_untracked = .false.
             new_child%first_child => null()
             new_child%next_sibling => null()
 
@@ -886,7 +909,7 @@ contains
                 child%next_sibling => new_child
             end if
 
-            call add_to_tree(new_child, rest, is_staged, is_unstaged)
+            call add_to_tree(new_child, rest, is_staged, is_unstaged, is_untracked)
         end if
     end subroutine add_to_tree
 
@@ -908,11 +931,13 @@ contains
 
         ! Build colored marks as character arrays
         character(len=50) :: mark_unstaged
+        character(len=50) :: mark_untracked
         character(len=50) :: mark_staged
 
         ! Initialize colored marks with explicit ESC characters
-        write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'
-        write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'
+        write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'  ! Red for modified
+        write(mark_untracked, '(A,A,A,A,A)') ESC, '[90m', ' ✗', ESC, '[0m'  ! Dim grey for untracked
+        write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'  ! Green for staged
 
         ! Count children first
         n_children = 0
@@ -930,12 +955,15 @@ contains
             else
                 line = prefix // branch_mid // ' ' // trim(node%name)
             end if
-            ! Show both indicators if file has both staged and unstaged changes
+            ! Show all applicable indicators
             if (node%is_staged) then
                 line = trim(line) // trim(mark_staged)
             end if
             if (node%is_unstaged) then
                 line = trim(line) // trim(mark_unstaged)
+            end if
+            if (node%is_untracked) then
+                line = trim(line) // trim(mark_untracked)
             end if
             print '(A)', trim(line)
         end if
