@@ -263,12 +263,99 @@ contains
             call add_to_tree(root, files(i)%path, files(i)%is_dirty)
         end do
 
+        ! Sort tree (directories first, then alphabetically)
+        call sort_tree(root)
+
         ! Print tree
         call print_tree_node(root, '', .true., .true.)
 
         ! Cleanup
         call free_tree(root)
     end subroutine display_tree
+
+    recursive subroutine sort_tree(node)
+        type(tree_node), pointer :: node
+        type(tree_node), pointer :: child
+
+        if (.not. associated(node)) return
+
+        ! Sort children of this node
+        call sort_children(node)
+
+        ! Recursively sort all children
+        child => node%first_child
+        do while (associated(child))
+            call sort_tree(child)
+            child => child%next_sibling
+        end do
+    end subroutine sort_tree
+
+    subroutine sort_children(node)
+        type(tree_node), pointer :: node
+        type(tree_node), pointer :: sorted_head, sorted_tail
+        type(tree_node), pointer :: current, next_node, insert_pos, prev
+        logical :: inserted
+
+        if (.not. associated(node%first_child)) return
+        if (.not. associated(node%first_child%next_sibling)) return
+
+        ! Build sorted list
+        sorted_head => null()
+        sorted_tail => null()
+
+        current => node%first_child
+        do while (associated(current))
+            next_node => current%next_sibling
+
+            ! Insert current into sorted list
+            if (.not. associated(sorted_head)) then
+                ! First element
+                sorted_head => current
+                sorted_tail => current
+                current%next_sibling => null()
+            else
+                ! Find insertion point: directories before files, alphabetical
+                inserted = .false.
+                prev => null()
+                insert_pos => sorted_head
+
+                do while (associated(insert_pos))
+                    if (should_insert_before(current, insert_pos)) then
+                        ! Insert before insert_pos
+                        current%next_sibling => insert_pos
+                        if (associated(prev)) then
+                            prev%next_sibling => current
+                        else
+                            sorted_head => current
+                        end if
+                        inserted = .true.
+                        exit
+                    end if
+                    prev => insert_pos
+                    insert_pos => insert_pos%next_sibling
+                end do
+
+                if (.not. inserted) then
+                    ! Insert at end
+                    sorted_tail%next_sibling => current
+                    sorted_tail => current
+                    current%next_sibling => null()
+                end if
+            end if
+
+            current => next_node
+        end do
+
+        node%first_child => sorted_head
+    end subroutine sort_children
+
+    function should_insert_before(a, b) result(before)
+        type(tree_node), pointer, intent(in) :: a, b
+        logical :: before
+
+        ! Pure alphabetical sorting (like tree command)
+        before = (trim(a%name) < trim(b%name))
+    end function should_insert_before
 
     recursive subroutine add_to_tree(node, path, is_dirty)
         type(tree_node), pointer, intent(in) :: node
@@ -348,19 +435,16 @@ contains
         character(len=*), intent(in) :: prefix
         logical, intent(in) :: is_last, is_root
 
-        character(len=1024) :: line, new_prefix
-        character(len=10) :: branch_char, vertical_char, cross_mark
+        character(len=1024) :: line
+        character(len=:), allocatable :: new_prefix
         type(tree_node), pointer :: child
         integer :: n_children, i
 
-        ! ASCII tree characters
-        if (is_last) then
-            branch_char = '`--'
-        else
-            branch_char = '|--'
-        end if
-        vertical_char = '|'
-        cross_mark = 'x'
+        ! UTF-8 box-drawing characters (like tree command)
+        character(len=*), parameter :: branch_last = '└──'
+        character(len=*), parameter :: branch_mid = '├──'
+        character(len=*), parameter :: vertical = '│'
+        character(len=*), parameter :: cross_mark = ' ✗'
 
         ! Count children first
         n_children = 0
@@ -372,15 +456,14 @@ contains
 
         ! Don't print root node
         if (.not. is_root) then
-            ! Build line with prefix (preserve trailing spaces in prefix!)
-            if (len_trim(prefix) == 0) then
-                line = trim(branch_char) // ' ' // trim(node%name)
+            ! Build line with appropriate branch character
+            if (is_last) then
+                line = prefix // branch_last // ' ' // trim(node%name)
             else
-                ! Don't trim prefix - spaces are significant for indentation
-                line = prefix(1:len_trim(prefix)+4) // trim(branch_char) // ' ' // trim(node%name)
+                line = prefix // branch_mid // ' ' // trim(node%name)
             end if
             if (node%is_dirty) then
-                line = trim(line) // ' ' // trim(cross_mark)
+                line = trim(line) // cross_mark
             end if
             print '(A)', trim(line)
         end if
@@ -394,19 +477,11 @@ contains
             if (is_root) then
                 new_prefix = ''
             else
-                ! Build new prefix preserving indentation spaces
+                ! Build new prefix with proper indentation
                 if (is_last) then
-                    if (len_trim(prefix) == 0) then
-                        new_prefix = '    '
-                    else
-                        new_prefix = prefix(1:len_trim(prefix)) // '    '
-                    end if
+                    new_prefix = prefix // '    '
                 else
-                    if (len_trim(prefix) == 0) then
-                        new_prefix = '|   '
-                    else
-                        new_prefix = prefix(1:len_trim(prefix)) // '|   '
-                    end if
+                    new_prefix = prefix // vertical // '   '
                 end if
             end if
 
