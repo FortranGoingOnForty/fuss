@@ -1,9 +1,10 @@
 Name:           fuss
-Version:        1.0.0
+Version:        0.1.0
 Release:        1%{?dist}
 Summary:        A tree utility for dirty git files, written in modern Fortran
 
 License:        MIT
+%global debug_package %{nil}
 URL:            https://github.com/FortranGoingOnForty/fuss
 Source0:        %{name}-%{version}.tar.gz
 
@@ -41,12 +42,11 @@ install -Dm755 fuss %{buildroot}%{_bindir}/fuss
 install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 
 %files
-%doc README.md
 %{_bindir}/fuss
 %{_docdir}/%{name}/README.md
 
 %changelog
-* Sat Oct 18 2025 mfw <espadon@outlook.com> - 1.0.0-1
+* Sat Oct 18 2025 mfw <espadon@outlook.com> - 0.1.0-1
 - Initial release of FUSS
 - Tree utility for dirty git files
 - UTF-8 tree rendering with box-drawing characters
