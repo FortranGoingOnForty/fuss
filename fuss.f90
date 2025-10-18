@@ -2,20 +2,20 @@ program fuss
     use iso_fortran_env, only: error_unit
     implicit none
 
-    ! Type definitions at program level
+    ! Tree node using linked list structure (first-child, next-sibling)
+    type :: tree_node
+        character(len=256) :: name
+        logical :: is_file
+        logical :: is_dirty
+        type(tree_node), pointer :: first_child => null()
+        type(tree_node), pointer :: next_sibling => null()
+    end type tree_node
+
     type :: file_entry
         character(len=512) :: path
         character(len=2) :: status
         logical :: is_dirty
     end type file_entry
-
-    type :: tree_node
-        character(len=256) :: name
-        logical :: is_file
-        logical :: is_dirty
-        type(tree_node), allocatable :: children(:)
-        integer :: n_children
-    end type tree_node
 
     ! Main program variables
     logical :: show_all
@@ -53,7 +53,6 @@ contains
         character(len=1024) :: buffer
         integer :: status
 
-        call execute_command_line('pwd', exitstat=status)
         call execute_command_line('pwd > /tmp/fuss_pwd.txt', exitstat=status)
 
         open(unit=99, file='/tmp/fuss_pwd.txt', status='old', action='read')
@@ -92,7 +91,7 @@ contains
         character(len=1024) :: line
         character(len=512) :: file_path
         character(len=2) :: git_status
-        integer :: i, max_files
+        integer :: max_files
         type(file_entry), allocatable :: temp_files(:)
 
         max_files = 1000
@@ -120,16 +119,19 @@ contains
             read(unit_num, '(A)', iostat=iostat) line
             if (iostat /= 0) exit
 
-            if (len_trim(line) > 0) then
+            if (len_trim(line) > 3) then
+                ! Parse git status line (format: "XY filename")
+                git_status = line(1:2)
+                file_path = adjustl(line(4:))
+
+                ! Skip if path is empty
+                if (len_trim(file_path) == 0) cycle
+
                 n_files = n_files + 1
                 if (n_files > max_files) then
                     max_files = max_files * 2
                     call resize_array(temp_files, max_files)
                 end if
-
-                ! Parse git status line (format: "XY filename")
-                git_status = line(1:2)
-                file_path = adjustl(line(4:))
 
                 temp_files(n_files)%status = git_status
                 temp_files(n_files)%path = trim(file_path)
@@ -141,14 +143,14 @@ contains
 
         ! Copy to output array
         allocate(files(n_files))
-        files(1:n_files) = temp_files(1:n_files)
+        if (n_files > 0) files(1:n_files) = temp_files(1:n_files)
         deallocate(temp_files)
     end subroutine get_dirty_files
 
     subroutine get_all_files(files, n_files)
         type(file_entry), allocatable, intent(out) :: files(:)
         integer, intent(out) :: n_files
-        integer :: iostat, unit_num, status_code, i, j
+        integer :: iostat, unit_num, status_code, i
         character(len=1024) :: line
         type(file_entry), allocatable :: dirty_files(:), temp_files(:)
         integer :: n_dirty, max_files
@@ -157,26 +159,32 @@ contains
         ! First get dirty files
         call get_dirty_files(dirty_files, n_dirty)
 
-        max_files = 1000
-        allocate(temp_files(max_files))
-        n_files = 0
-
         ! Get all files using find
         call execute_command_line('find . -type f ! -path "*/\.git/*" > /tmp/fuss_all_files.txt', exitstat=status_code)
 
         if (status_code /= 0) then
-            files = dirty_files
+            ! If find fails, just return dirty files
+            allocate(files(n_dirty))
+            if (n_dirty > 0) files = dirty_files
             n_files = n_dirty
+            if (allocated(dirty_files)) deallocate(dirty_files)
             return
         end if
 
         open(newunit=unit_num, file='/tmp/fuss_all_files.txt', status='old', action='read', iostat=iostat)
 
         if (iostat /= 0) then
-            files = dirty_files
+            ! If open fails, just return dirty files
+            allocate(files(n_dirty))
+            if (n_dirty > 0) files = dirty_files
             n_files = n_dirty
+            if (allocated(dirty_files)) deallocate(dirty_files)
             return
         end if
+
+        max_files = 1000
+        allocate(temp_files(max_files))
+        n_files = 0
 
         do
             read(unit_num, '(A)', iostat=iostat) line
@@ -184,7 +192,12 @@ contains
 
             if (len_trim(line) > 0) then
                 ! Remove leading "./"
-                if (line(1:2) == './') line = line(3:)
+                if (len(line) >= 2) then
+                    if (line(1:2) == './') line = line(3:)
+                end if
+
+                ! Skip if path is empty after trimming
+                if (len_trim(line) == 0) cycle
 
                 n_files = n_files + 1
                 if (n_files > max_files) then
@@ -194,6 +207,7 @@ contains
 
                 ! Check if file is dirty
                 is_dirty_file = .false.
+                temp_files(n_files)%status = '  '  ! Initialize as clean
                 do i = 1, n_dirty
                     if (trim(dirty_files(i)%path) == trim(line)) then
                         is_dirty_file = .true.
@@ -210,7 +224,7 @@ contains
         close(unit_num, status='delete')
 
         allocate(files(n_files))
-        files(1:n_files) = temp_files(1:n_files)
+        if (n_files > 0) files(1:n_files) = temp_files(1:n_files)
         deallocate(temp_files)
         if (allocated(dirty_files)) deallocate(dirty_files)
     end subroutine get_all_files
@@ -233,15 +247,16 @@ contains
     subroutine display_tree(files, n_files)
         type(file_entry), intent(in) :: files(:)
         integer, intent(in) :: n_files
-        type(tree_node) :: root
+        type(tree_node), pointer :: root
         integer :: i
 
-        ! Initialize root
+        ! Create root
+        allocate(root)
         root%name = '.'
         root%is_file = .false.
         root%is_dirty = .false.
-        root%n_children = 0
-        allocate(root%children(0))
+        root%first_child => null()
+        root%next_sibling => null()
 
         ! Build tree
         do i = 1, n_files
@@ -250,47 +265,49 @@ contains
 
         ! Print tree
         call print_tree_node(root, '', .true., .true.)
+
+        ! Cleanup
+        call free_tree(root)
     end subroutine display_tree
 
     recursive subroutine add_to_tree(node, path, is_dirty)
-        type(tree_node), intent(inout) :: node
+        type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: path
         logical, intent(in) :: is_dirty
 
         integer :: slash_pos
         character(len=512) :: first_part, rest
-        integer :: i
-        logical :: found
-        type(tree_node), allocatable :: temp_children(:)
+        type(tree_node), pointer :: child, new_child
 
         ! Find first slash
         slash_pos = index(path, '/')
 
         if (slash_pos == 0) then
-            ! This is a file in current directory
-            found = .false.
-            do i = 1, node%n_children
-                if (trim(node%children(i)%name) == trim(path)) then
-                    found = .true.
-                    node%children(i)%is_dirty = node%children(i)%is_dirty .or. is_dirty
-                    exit
+            ! This is a file in current directory - add as child
+            child => node%first_child
+
+            ! Check if already exists
+            do while (associated(child))
+                if (trim(child%name) == trim(path)) then
+                    child%is_dirty = child%is_dirty .or. is_dirty
+                    return
                 end if
+                if (.not. associated(child%next_sibling)) exit
+                child => child%next_sibling
             end do
 
-            if (.not. found) then
-                ! Add new file
-                allocate(temp_children(node%n_children + 1))
-                if (node%n_children > 0) then
-                    temp_children(1:node%n_children) = node%children
-                end if
-                temp_children(node%n_children + 1)%name = trim(path)
-                temp_children(node%n_children + 1)%is_file = .true.
-                temp_children(node%n_children + 1)%is_dirty = is_dirty
-                temp_children(node%n_children + 1)%n_children = 0
-                allocate(temp_children(node%n_children + 1)%children(0))
+            ! Add new child
+            allocate(new_child)
+            new_child%name = trim(path)
+            new_child%is_file = .true.
+            new_child%is_dirty = is_dirty
+            new_child%first_child => null()
+            new_child%next_sibling => null()
 
-                call move_alloc(temp_children, node%children)
-                node%n_children = node%n_children + 1
+            if (.not. associated(node%first_child)) then
+                node%first_child => new_child
+            else
+                child%next_sibling => new_child
             end if
         else
             ! Split path
@@ -298,59 +315,70 @@ contains
             rest = path(slash_pos+1:)
 
             ! Find or create subdirectory
-            found = .false.
-            do i = 1, node%n_children
-                if (trim(node%children(i)%name) == trim(first_part)) then
-                    found = .true.
-                    call add_to_tree(node%children(i), rest, is_dirty)
-                    exit
+            child => node%first_child
+            do while (associated(child))
+                if (trim(child%name) == trim(first_part)) then
+                    call add_to_tree(child, rest, is_dirty)
+                    return
                 end if
+                if (.not. associated(child%next_sibling)) exit
+                child => child%next_sibling
             end do
 
-            if (.not. found) then
-                ! Add new directory
-                allocate(temp_children(node%n_children + 1))
-                if (node%n_children > 0) then
-                    temp_children(1:node%n_children) = node%children
-                end if
-                temp_children(node%n_children + 1)%name = trim(first_part)
-                temp_children(node%n_children + 1)%is_file = .false.
-                temp_children(node%n_children + 1)%is_dirty = .false.
-                temp_children(node%n_children + 1)%n_children = 0
-                allocate(temp_children(node%n_children + 1)%children(0))
+            ! Create new directory
+            allocate(new_child)
+            new_child%name = trim(first_part)
+            new_child%is_file = .false.
+            new_child%is_dirty = .false.
+            new_child%first_child => null()
+            new_child%next_sibling => null()
 
-                call move_alloc(temp_children, node%children)
-                node%n_children = node%n_children + 1
-
-                call add_to_tree(node%children(node%n_children), rest, is_dirty)
+            if (.not. associated(node%first_child)) then
+                node%first_child => new_child
+            else
+                child%next_sibling => new_child
             end if
+
+            call add_to_tree(new_child, rest, is_dirty)
         end if
     end subroutine add_to_tree
 
     recursive subroutine print_tree_node(node, prefix, is_last, is_root)
-        type(tree_node), intent(in) :: node
+        type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: prefix
         logical, intent(in) :: is_last, is_root
 
         character(len=1024) :: line, new_prefix
-        integer :: i
-        character(len=10) :: branch_char, extension_char, cross_mark, vertical_char
-
-        ! Unicode box drawing characters using char() with selected_char_kind
-        ! We'll use simple ASCII fallback since gfortran has issues with achar > 127
+        character(len=10) :: branch_char, vertical_char, cross_mark
+        type(tree_node), pointer :: child
+        integer :: n_children, i
 
         ! ASCII tree characters
         if (is_last) then
-            branch_char = '└──'
+            branch_char = '`--'
         else
-            branch_char = '├──'
+            branch_char = '|--'
         end if
-        vertical_char = '│'
-        cross_mark = '✗'
+        vertical_char = '|'
+        cross_mark = 'x'
+
+        ! Count children first
+        n_children = 0
+        child => node%first_child
+        do while (associated(child))
+            n_children = n_children + 1
+            child => child%next_sibling
+        end do
 
         ! Don't print root node
         if (.not. is_root) then
-            line = prefix // trim(branch_char) // ' ' // trim(node%name)
+            ! Build line with prefix (preserve trailing spaces in prefix!)
+            if (len_trim(prefix) == 0) then
+                line = trim(branch_char) // ' ' // trim(node%name)
+            else
+                ! Don't trim prefix - spaces are significant for indentation
+                line = prefix(1:len_trim(prefix)+4) // trim(branch_char) // ' ' // trim(node%name)
+            end if
             if (node%is_dirty) then
                 line = trim(line) // ' ' // trim(cross_mark)
             end if
@@ -358,19 +386,52 @@ contains
         end if
 
         ! Print children
-        do i = 1, node%n_children
+        i = 0
+        child => node%first_child
+        do while (associated(child))
+            i = i + 1
+
             if (is_root) then
                 new_prefix = ''
             else
+                ! Build new prefix preserving indentation spaces
                 if (is_last) then
-                    new_prefix = prefix // '    '
+                    if (len_trim(prefix) == 0) then
+                        new_prefix = '    '
+                    else
+                        new_prefix = prefix(1:len_trim(prefix)) // '    '
+                    end if
                 else
-                    new_prefix = prefix // trim(vertical_char) // '   '
+                    if (len_trim(prefix) == 0) then
+                        new_prefix = '|   '
+                    else
+                        new_prefix = prefix(1:len_trim(prefix)) // '|   '
+                    end if
                 end if
             end if
 
-            call print_tree_node(node%children(i), new_prefix, i == node%n_children, .false.)
+            call print_tree_node(child, new_prefix, i == n_children, .false.)
+            child => child%next_sibling
         end do
     end subroutine print_tree_node
+
+    recursive subroutine free_tree(node)
+        type(tree_node), pointer :: node
+        type(tree_node), pointer :: child, next_child
+
+        if (.not. associated(node)) return
+
+        ! Free all children
+        child => node%first_child
+        do while (associated(child))
+            next_child => child%next_sibling
+            call free_tree(child)
+            child => next_child
+        end do
+
+        ! Free this node
+        deallocate(node)
+        nullify(node)
+    end subroutine free_tree
 
 end program fuss
