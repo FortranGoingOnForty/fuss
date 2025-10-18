@@ -143,10 +143,11 @@ contains
                 ! Skip if path is empty
                 if (len_trim(file_path) == 0) cycle
 
-                ! Remove trailing slash if it's a directory
+                ! Skip directory-only entries (ending with /)
+                ! Git will report actual files inside, which will create the directory structure
                 if (len_trim(file_path) > 0) then
                     if (file_path(len_trim(file_path):len_trim(file_path)) == '/') then
-                        file_path = file_path(1:len_trim(file_path)-1)
+                        cycle  ! Skip this entry entirely
                     end if
                 end if
 
