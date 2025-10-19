@@ -23,13 +23,25 @@ all: $(TARGET)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Build modules
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.f90 | $(BUILD_DIR)
+# Build modules with explicit dependencies
+$(BUILD_DIR)/types_module.o: $(SRC_DIR)/types_module.f90 | $(BUILD_DIR)
 	$(FC) $(FFLAGS) -J$(BUILD_DIR) -c $< -o $@
+
+$(BUILD_DIR)/terminal_module.o: $(SRC_DIR)/terminal_module.f90 | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -c $< -o $@
+
+$(BUILD_DIR)/git_module.o: $(SRC_DIR)/git_module.f90 $(BUILD_DIR)/types_module.o | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -I$(BUILD_DIR) -c $< -o $@
+
+$(BUILD_DIR)/tree_module.o: $(SRC_DIR)/tree_module.f90 $(BUILD_DIR)/types_module.o | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -I$(BUILD_DIR) -c $< -o $@
+
+$(BUILD_DIR)/display_module.o: $(SRC_DIR)/display_module.f90 $(BUILD_DIR)/tree_module.o $(BUILD_DIR)/types_module.o | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -I$(BUILD_DIR) -c $< -o $@
 
 # Build main program
 $(MAIN_OBJ): $(SRC_DIR)/$(MAIN) $(MODULE_OBJS) | $(BUILD_DIR)
-	$(FC) $(FFLAGS) -I$(BUILD_DIR) -c $< -o $@
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -I$(BUILD_DIR) -c $< -o $@
 
 # Link everything
 $(TARGET): $(MODULE_OBJS) $(MAIN_OBJ)
