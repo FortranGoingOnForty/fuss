@@ -9,12 +9,35 @@ An interactive tree utility for complete git workflows, written in modern Fortra
 - Proper UTF-8 tree rendering with box-drawing characters (`├──`, `└──`, `│`)
 - **Color-coded status indicators:**
   - Green `↑` - Staged changes (ready to commit)
+  - Yellow `↓` - pending changes from remote
   - Red `✗` - Modified tracked files
   - Dim grey `✗` - Untracked files
 - Supports `--all`/`-a` flag to show all files (with status marked)
 - Alphabetically sorted output matching the `tree` command format
-- **Interactive mode** with full git workflow: stage, unstage, commit, push, and status view
-- **Modular Fortran architecture** for maintainability and extensibility
+- **Interactive mode** with full git workflow: stage, unstage, commit, push, diff (with pager), status (with pager), fetch, and pull
+
+## Installing
+
+### AUR
+
+```bash
+paru -S fuss
+or
+yay -s fuss
+```
+
+### Homebrew
+
+```bash
+brew tap FortranGoingOnForty/fuss
+brew install fuss
+```
+
+### RPM
+```bash
+sudo dnf config-manager --add-repo https://repos.musicsian.com/musicsian.repo
+sudo dnf install fuss
+```
 
 ## Building
 
@@ -52,6 +75,9 @@ Interactive mode (full git workflow):
 - `a`: Stage file (git add)
 - `u`: Unstage file (git restore --staged)
 - `m`: Commit with message prompt
+- `f`: fetch from remote
+- `l`: pull from remote
+- `d`: diff selected file in pager
 - `p`: Push to remote
 - `s`: View full git status (scrollable with `less`)
 
