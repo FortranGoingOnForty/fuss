@@ -88,6 +88,10 @@ contains
         integer :: n_files, n_items, selected, i, status
         character(len=1) :: key
         logical :: running
+        character(len=256) :: repo_name, branch_name
+
+        ! Get repo and branch info
+        call get_repo_info(repo_name, branch_name)
 
         ! Get files
         if (show_all) then
@@ -115,7 +119,7 @@ contains
         do while (running)
             ! Clear screen and redraw
             call clear_screen()
-            call draw_interactive_tree(files, n_files, items, n_items, selected)
+            call draw_interactive_tree(files, n_files, items, n_items, selected, repo_name, branch_name)
 
             ! Read key
             call read_key(key)
@@ -163,6 +167,16 @@ contains
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('s')  ! Show git status (lowercase)
                 call show_status_view()
+            case ('p')  ! Push (lowercase)
+                call push_prompt()
+                ! Refresh files after push
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call build_item_list(files, n_files, items, n_items)
+                if (selected > n_items .and. n_items > 0) selected = n_items
             case ('q', 'Q')  ! Quit
                 running = .false.
             end select
@@ -296,21 +310,26 @@ contains
     end subroutine commit_prompt
 
     subroutine show_status_view()
-        character(len=512), allocatable :: status_lines(:)
-        integer :: n_lines
+        ! Use less for scrollable, searchable git status view
+        call show_git_status_paged()
+    end subroutine show_status_view
+
+    subroutine push_prompt()
+        logical :: success
         character(len=1) :: key
 
-        ! Get git status output
-        call get_git_status_output(status_lines, n_lines, 100)
+        ! Clear screen for push prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mGit Push' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Pushing to remote...'
+        print '(A)', ''
 
-        ! Display status view
-        call draw_status_view(status_lines, n_lines)
+        ! Execute push
+        call git_push(success)
 
-        ! Wait for keypress to return
+        ! Wait for keypress to continue
         call read_key(key)
-
-        ! Cleanup
-        if (allocated(status_lines)) deallocate(status_lines)
-    end subroutine show_status_view
+    end subroutine push_prompt
 
 end program fuss

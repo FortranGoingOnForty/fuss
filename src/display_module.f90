@@ -114,12 +114,14 @@ contains
         end do
     end subroutine print_tree_node
 
-    subroutine draw_interactive_tree(files, n_files, items, n_items, selected)
+    subroutine draw_interactive_tree(files, n_files, items, n_items, selected, repo_name, branch_name)
         type(file_entry), intent(in) :: files(:)
         integer, intent(in) :: n_files, n_items, selected
         type(selectable_item), intent(in) :: items(:)
+        character(len=*), intent(in) :: repo_name, branch_name
         type(tree_node), pointer :: root
         integer :: i, item_idx
+        character(len=512) :: status_line
 
         ! Build tree
         allocate(root)
@@ -137,6 +139,16 @@ contains
 
         call sort_tree(root)
 
+        ! Display repo:branch info at top if available
+        if (len_trim(repo_name) > 0 .and. len_trim(branch_name) > 0) then
+            write(status_line, '(A,A,A,A,A,A,A)') &
+                achar(27) // '[1;36m', trim(repo_name), achar(27) // '[0m', &
+                ':', &
+                achar(27) // '[1;33m', trim(branch_name), achar(27) // '[0m'
+            print '(A)', trim(status_line)
+            print '(A)', ''
+        end if
+
         ! Print tree with selection highlighting
         item_idx = 0
         print '(A)', '.'
@@ -147,7 +159,7 @@ contains
         print '(A)', achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
                      achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                      achar(27) // '[90m✗' // achar(27) // '[0m=untracked'
-        print '(A)', 'j/↓: down | k/↑: up | Space: stage file | q: quit'
+        print '(A)', 'j/k/↓/↑: navigate | a: stage | u: unstage | m: commit | p: push | s: status | q: quit'
 
         call free_tree(root)
     end subroutine draw_interactive_tree
@@ -252,5 +264,29 @@ contains
             child => child%next_sibling
         end do
     end subroutine print_interactive_node
+
+    subroutine draw_status_view(status_lines, n_lines)
+        character(len=*), intent(in) :: status_lines(:)
+        integer, intent(in) :: n_lines
+        integer :: i
+
+        ! Clear screen
+        call clear_screen()
+
+        ! Display header
+        print '(A)', achar(27) // '[1mGit Status' // achar(27) // '[0m'
+        print '(A)', '=========================================='
+        print '(A)', ''
+
+        ! Display status output
+        do i = 1, n_lines
+            print '(A)', trim(status_lines(i))
+        end do
+
+        ! Display footer
+        print '(A)', ''
+        print '(A)', '=========================================='
+        print '(A)', 'Press any key to return to tree view...'
+    end subroutine draw_status_view
 
 end module display_module

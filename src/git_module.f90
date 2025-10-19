@@ -337,4 +337,69 @@ contains
         deallocate(temp_lines)
     end subroutine get_git_status_output
 
+    subroutine git_push(success)
+        logical, intent(out) :: success
+        integer :: status
+
+        ! Execute git push
+        call execute_command_line('git push 2>&1', exitstat=status)
+
+        success = (status == 0)
+
+        ! Show feedback
+        if (success) then
+            print '(A)', achar(27) // '[32m✓ Pushed successfully!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Push failed (check remote/branch)' // achar(27) // '[0m'
+        end if
+
+        print '(A)', 'Press any key to continue...'
+    end subroutine git_push
+
+    subroutine show_git_status_paged()
+        integer :: status
+
+        ! Disable cbreak mode temporarily (will be restored by caller)
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Use less for scrollable git status display
+        ! -R preserves colors, -X prevents screen clear on exit
+        call execute_command_line('git status | less -RX', exitstat=status, wait=.true.)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine show_git_status_paged
+
+    subroutine get_repo_info(repo_name, branch_name)
+        character(len=*), intent(out) :: repo_name, branch_name
+        integer :: iostat, unit_num, status_code
+
+        repo_name = ''
+        branch_name = ''
+
+        ! Get repo name (basename of repo root)
+        call execute_command_line('git rev-parse --show-toplevel 2>/dev/null | xargs basename > /tmp/fuss_repo.txt', &
+                                  exitstat=status_code)
+
+        if (status_code == 0) then
+            open(newunit=unit_num, file='/tmp/fuss_repo.txt', status='old', action='read', iostat=iostat)
+            if (iostat == 0) then
+                read(unit_num, '(A)', iostat=iostat) repo_name
+                close(unit_num, status='delete')
+            end if
+        end if
+
+        ! Get current branch name
+        call execute_command_line('git rev-parse --abbrev-ref HEAD 2>/dev/null > /tmp/fuss_branch.txt', &
+                                  exitstat=status_code)
+
+        if (status_code == 0) then
+            open(newunit=unit_num, file='/tmp/fuss_branch.txt', status='old', action='read', iostat=iostat)
+            if (iostat == 0) then
+                read(unit_num, '(A)', iostat=iostat) branch_name
+                close(unit_num, status='delete')
+            end if
+        end if
+    end subroutine get_repo_info
+
 end module git_module
