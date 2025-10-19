@@ -8,6 +8,7 @@ module types_module
         logical :: is_staged
         logical :: is_unstaged
         logical :: is_untracked
+        logical :: has_incoming
         type(tree_node), pointer :: first_child => null()
         type(tree_node), pointer :: next_sibling => null()
     end type tree_node
@@ -18,6 +19,7 @@ module types_module
         logical :: is_staged
         logical :: is_unstaged
         logical :: is_untracked
+        logical :: has_incoming
     end type file_entry
 
     type :: selectable_item
@@ -25,6 +27,7 @@ module types_module
         logical :: is_staged
         logical :: is_unstaged
         logical :: is_untracked
+        logical :: has_incoming
         logical :: is_file
     end type selectable_item
 

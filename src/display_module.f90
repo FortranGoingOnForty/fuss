@@ -20,12 +20,13 @@ contains
         root%is_staged = .false.
         root%is_unstaged = .false.
         root%is_untracked = .false.
+        root%has_incoming = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         ! Build tree
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
         end do
 
         ! Sort tree
@@ -58,10 +59,12 @@ contains
         character(len=50) :: mark_unstaged
         character(len=50) :: mark_untracked
         character(len=50) :: mark_staged
+        character(len=50) :: mark_incoming
 
         write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'
         write(mark_untracked, '(A,A,A,A,A)') ESC, '[90m', ' ✗', ESC, '[0m'
         write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'
+        write(mark_incoming, '(A,A,A,A,A)') ESC, '[34m', ' ↓', ESC, '[0m'
 
         ! Count children first
         n_children = 0
@@ -89,6 +92,9 @@ contains
             end if
             if (node%is_untracked) then
                 line = trim(line) // trim(mark_untracked)
+            end if
+            if (node%has_incoming) then
+                line = trim(line) // trim(mark_incoming)
             end if
             print '(A)', trim(line)
         end if
@@ -132,11 +138,12 @@ contains
         root%is_staged = .false.
         root%is_unstaged = .false.
         root%is_untracked = .false.
+        root%has_incoming = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
         end do
 
         call sort_tree(root)
@@ -161,12 +168,13 @@ contains
         call print_interactive_node(root, '', .true., .true., items, selected, &
                                     item_idx, viewport_offset, viewport_end)
 
-        ! Print help
+        ! Print help (two rows for better readability)
         print '(A)', ''
-        print '(A)', achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
+        print '(A)', 'Legend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
                      achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
-                     achar(27) // '[90m✗' // achar(27) // '[0m=untracked'
-        print '(A)', 'j/k/↓/↑: navigate | a: stage | u: unstage | m: commit | p: push | s: status | q: quit'
+                     achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
+                     achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
+        print '(A)', 'Keys: j/k/↑/↓:nav | a:stage | u:unstage | f:fetch | d:diff | l:pull | m:commit | p:push | s:status | q:quit'
 
         call free_tree(root)
     end subroutine draw_interactive_tree
@@ -197,10 +205,12 @@ contains
         character(len=50) :: mark_unstaged
         character(len=50) :: mark_untracked
         character(len=50) :: mark_staged
+        character(len=50) :: mark_incoming
 
         write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'
         write(mark_untracked, '(A,A,A,A,A)') ESC, '[90m', ' ✗', ESC, '[0m'
         write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'
+        write(mark_incoming, '(A,A,A,A,A)') ESC, '[34m', ' ↓', ESC, '[0m'
 
         ! Count children first
         n_children = 0
@@ -237,6 +247,9 @@ contains
                     if (node%is_untracked) then
                         line = trim(line) // trim(mark_untracked)
                     end if
+                    if (node%has_incoming) then
+                        line = trim(line) // trim(mark_incoming)
+                    end if
                     line = trim(line) // highlight_off
                 else
                     line = trim(line) // trim(node%name)
@@ -248,6 +261,9 @@ contains
                     end if
                     if (node%is_untracked) then
                         line = trim(line) // trim(mark_untracked)
+                    end if
+                    if (node%has_incoming) then
+                        line = trim(line) // trim(mark_incoming)
                     end if
                 end if
 

@@ -72,6 +72,9 @@ contains
             call get_dirty_files(files, n_files)
         end if
 
+        ! Mark files with incoming changes
+        call mark_incoming_changes(files, n_files)
+
         ! Display the tree
         if (n_files > 0) then
             print '(A)', '.'
@@ -106,6 +109,9 @@ contains
         else
             call get_dirty_files(files, n_files)
         end if
+
+        ! Mark files with incoming changes
+        call mark_incoming_changes(files, n_files)
 
         if (n_files == 0) then
             print '(A)', 'No files to display'
@@ -171,6 +177,7 @@ contains
                     else
                         call get_dirty_files(files, n_files)
                     end if
+                    call mark_incoming_changes(files, n_files)
                     call build_item_list(files, n_files, items, n_items)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
@@ -184,6 +191,7 @@ contains
                     else
                         call get_dirty_files(files, n_files)
                     end if
+                    call mark_incoming_changes(files, n_files)
                     call build_item_list(files, n_files, items, n_items)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                 end if
@@ -195,6 +203,7 @@ contains
                 else
                     call get_dirty_files(files, n_files)
                 end if
+                call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('s')  ! Show git status (lowercase)
@@ -207,6 +216,33 @@ contains
                 else
                     call get_dirty_files(files, n_files)
                 end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('f')  ! Git fetch
+                call git_fetch()
+                ! Refresh files after fetch
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('d')  ! Git diff with less
+                if (items(selected)%is_file) then
+                    call git_diff_file(items(selected)%path, items(selected)%has_incoming)
+                end if
+            case ('l')  ! Git pull
+                call git_pull()
+                ! Refresh files after pull
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('q', 'Q')  ! Quit
@@ -238,11 +274,12 @@ contains
         root%is_staged = .false.
         root%is_unstaged = .false.
         root%is_untracked = .false.
+        root%has_incoming = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
         end do
 
         call sort_tree(root)
@@ -291,6 +328,7 @@ contains
             items(n_items)%is_staged = node%is_staged
             items(n_items)%is_unstaged = node%is_unstaged
             items(n_items)%is_untracked = node%is_untracked
+            items(n_items)%has_incoming = node%has_incoming
         else
             full_path = ''
         end if

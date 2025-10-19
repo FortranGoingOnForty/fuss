@@ -69,6 +69,7 @@ contains
                 temp_files(n_files)%is_untracked = (git_status == '??')
                 temp_files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
                 temp_files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. temp_files(n_files)%is_untracked)
+                temp_files(n_files)%has_incoming = .false.
             end if
         end do
 
@@ -142,6 +143,7 @@ contains
                 temp_files(n_files)%is_staged = .false.
                 temp_files(n_files)%is_unstaged = .false.
                 temp_files(n_files)%is_untracked = .false.
+                temp_files(n_files)%has_incoming = .false.
                 do i = 1, n_dirty
                     if (trim(dirty_files(i)%path) == trim(line)) then
                         is_dirty_file = .true.
@@ -149,6 +151,7 @@ contains
                         temp_files(n_files)%is_staged = dirty_files(i)%is_staged
                         temp_files(n_files)%is_unstaged = dirty_files(i)%is_unstaged
                         temp_files(n_files)%is_untracked = dirty_files(i)%is_untracked
+                        temp_files(n_files)%has_incoming = dirty_files(i)%has_incoming
                         exit
                     end if
                 end do
@@ -223,6 +226,7 @@ contains
                 files(n_files)%is_untracked = (git_status == '??')
                 files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
                 files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. files(n_files)%is_untracked)
+                files(n_files)%has_incoming = .false.
             end if
         end do
 
@@ -401,5 +405,215 @@ contains
             end if
         end if
     end subroutine get_repo_info
+
+    subroutine prompt_upstream_selection(success)
+        logical, intent(out) :: success
+        integer :: status_code
+        character(len=512) :: selected_branch
+
+        success = .false.
+
+        print '(A)', ''
+        print '(A)', 'No upstream branch configured for this branch.'
+        print '(A)', 'Select a remote branch to track:'
+        print '(A)', ''
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status_code)
+
+        ! Use fzf to select remote branch
+        call execute_command_line('git branch -r | grep -v HEAD | sed "s/^  //" | ' // &
+                                  'fzf --height=10 --prompt="Select upstream: " > /tmp/fuss_upstream.txt', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            print '(A)', 'No upstream selected.'
+            call execute_command_line('sleep 1', exitstat=status_code)
+            ! Re-enable cbreak mode
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status_code)
+            return
+        end if
+
+        ! Read selected branch
+        open(unit=99, file='/tmp/fuss_upstream.txt', status='old', action='read', iostat=status_code)
+        if (status_code == 0) then
+            read(99, '(A)', iostat=status_code) selected_branch
+            close(99, status='delete')
+
+            if (status_code == 0 .and. len_trim(selected_branch) > 0) then
+                ! Set upstream
+                call execute_command_line('git branch --set-upstream-to=' // trim(selected_branch), &
+                                          exitstat=status_code)
+
+                if (status_code == 0) then
+                    print '(A)', achar(27) // '[32m✓ Upstream set to: ' // trim(selected_branch) // achar(27) // '[0m'
+                    success = .true.
+                else
+                    print '(A)', achar(27) // '[31m✗ Failed to set upstream' // achar(27) // '[0m'
+                end if
+                call execute_command_line('sleep 1', exitstat=status_code)
+            end if
+        end if
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status_code)
+    end subroutine prompt_upstream_selection
+
+    subroutine mark_incoming_changes(files, n_files)
+        type(file_entry), intent(inout) :: files(:)
+        integer, intent(in) :: n_files
+        integer :: iostat, unit_num, status_code, i
+        character(len=1024) :: line
+        character(len=512) :: incoming_path
+        logical :: upstream_set
+
+        ! Check if there's an upstream branch configured
+        call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status_code)
+        if (status_code /= 0) then
+            ! No upstream configured - prompt user to select one
+            call prompt_upstream_selection(upstream_set)
+            if (.not. upstream_set) return
+        end if
+
+        ! Get list of files that differ between HEAD and upstream
+        call execute_command_line('git diff --name-only HEAD...@{upstream} > /tmp/fuss_incoming.txt 2>/dev/null', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            ! If diff fails, no incoming changes
+            return
+        end if
+
+        open(newunit=unit_num, file='/tmp/fuss_incoming.txt', status='old', action='read', iostat=iostat)
+        if (iostat /= 0) return
+
+        do
+            read(unit_num, '(A)', iostat=iostat) line
+            if (iostat /= 0) exit
+
+            if (len_trim(line) > 0) then
+                incoming_path = trim(line)
+                ! Mark this file as having incoming changes
+                do i = 1, n_files
+                    if (trim(files(i)%path) == trim(incoming_path)) then
+                        files(i)%has_incoming = .true.
+                        exit
+                    end if
+                end do
+            end if
+        end do
+
+        close(unit_num, status='delete')
+    end subroutine mark_incoming_changes
+
+    subroutine git_fetch()
+        integer :: status
+        logical :: upstream_set
+
+        ! Check if there's an upstream branch configured
+        call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status)
+        if (status /= 0) then
+            ! No upstream configured - prompt user to select one
+            call prompt_upstream_selection(upstream_set)
+            if (.not. upstream_set) return
+        end if
+
+        ! Run git fetch
+        print '(A)', 'Fetching from remote...'
+        call execute_command_line('git fetch', exitstat=status)
+
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ Fetch completed!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Fetch failed!' // achar(27) // '[0m'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 1', exitstat=status)
+    end subroutine git_fetch
+
+    subroutine git_pull()
+        integer :: status
+        logical :: upstream_set
+
+        ! Check if there's an upstream branch configured
+        call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status)
+        if (status /= 0) then
+            ! No upstream configured - prompt user to select one
+            call prompt_upstream_selection(upstream_set)
+            if (.not. upstream_set) return
+        end if
+
+        ! Run git pull
+        print '(A)', 'Pulling from remote...'
+        call execute_command_line('git pull', exitstat=status)
+
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ Pull completed!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Pull failed!' // achar(27) // '[0m'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 1', exitstat=status)
+    end subroutine git_pull
+
+    subroutine git_diff_file(filepath, has_incoming)
+        character(len=*), intent(in) :: filepath
+        logical, intent(in) :: has_incoming
+        character(len=2048) :: command
+        integer :: status
+        logical :: upstream_set
+        logical :: has_local_changes
+
+        ! Restore terminal temporarily for less
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Check if file has local changes (unstaged or staged)
+        call execute_command_line('git status --porcelain -- "' // trim(filepath) // '" | grep -q "^.M\|^M"', &
+                                  exitstat=status)
+        has_local_changes = (status == 0)
+
+        if (has_local_changes .and. has_incoming) then
+            ! Show both local changes and incoming changes
+            print '(A)', achar(27) // '[1;33mShowing LOCAL changes (working tree vs HEAD):' // achar(27) // '[0m'
+            print '(A)', ''
+            write(command, '(A,A,A)') '(git diff HEAD -- "', trim(filepath), '" && echo "" && echo "' // &
+                                      achar(27) // '[1;33m=== INCOMING changes (upstream vs HEAD) ===' // achar(27) // &
+                                      '[0m" && echo "" && git diff HEAD...@{upstream} -- "', trim(filepath), &
+                                      '") | less -R'
+            call execute_command_line(trim(command), exitstat=status)
+        else if (has_local_changes) then
+            ! Show local changes only (working tree vs HEAD)
+            print '(A)', achar(27) // '[1;33mShowing LOCAL changes (working tree vs HEAD):' // achar(27) // '[0m'
+            print '(A)', ''
+            write(command, '(A,A,A)') 'git diff HEAD -- "', trim(filepath), '" | less -R'
+            call execute_command_line(trim(command), exitstat=status)
+        else if (has_incoming) then
+            ! Show incoming changes only (upstream vs HEAD)
+            ! Check if there's an upstream branch configured
+            call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status)
+            if (status /= 0) then
+                ! No upstream configured - prompt user to select one
+                call prompt_upstream_selection(upstream_set)
+                if (.not. upstream_set) then
+                    call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+                    return
+                end if
+            end if
+
+            print '(A)', achar(27) // '[1;33mShowing INCOMING changes (upstream vs HEAD):' // achar(27) // '[0m'
+            print '(A)', ''
+            write(command, '(A,A,A)') 'git diff HEAD...@{upstream} -- "', trim(filepath), '" | less -R'
+            call execute_command_line(trim(command), exitstat=status)
+        else
+            ! No changes to show
+            print '(A)', achar(27) // '[33mNo changes to show for: ' // trim(filepath) // achar(27) // '[0m'
+            call execute_command_line('sleep 1', exitstat=status)
+        end if
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_diff_file
 
 end module git_module
