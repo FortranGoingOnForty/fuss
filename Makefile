@@ -1,6 +1,6 @@
 # Makefile for modular fuss
 FC = gfortran
-FFLAGS = -O2 -Wall
+FFLAGS = -O2 -Wall -ffree-line-length-none
 SRC_DIR = src
 BUILD_DIR = build
 BIN_DIR = .
