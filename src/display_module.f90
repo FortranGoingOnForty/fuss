@@ -114,13 +114,15 @@ contains
         end do
     end subroutine print_tree_node
 
-    subroutine draw_interactive_tree(files, n_files, items, n_items, selected, repo_name, branch_name)
+    subroutine draw_interactive_tree(files, n_files, items, n_items, selected, &
+                                     repo_name, branch_name, viewport_offset, visible_items)
         type(file_entry), intent(in) :: files(:)
         integer, intent(in) :: n_files, n_items, selected
         type(selectable_item), intent(in) :: items(:)
         character(len=*), intent(in) :: repo_name, branch_name
+        integer, intent(in) :: viewport_offset, visible_items
         type(tree_node), pointer :: root
-        integer :: i, item_idx
+        integer :: i, item_idx, viewport_end
         character(len=512) :: status_line
 
         ! Build tree
@@ -149,10 +151,15 @@ contains
             print '(A)', ''
         end if
 
+        ! Calculate viewport range
+        viewport_end = viewport_offset + visible_items - 1
+        if (viewport_end > n_items) viewport_end = n_items
+
         ! Print tree with selection highlighting
         item_idx = 0
         print '(A)', '.'
-        call print_interactive_node(root, '', .true., .true., items, selected, item_idx)
+        call print_interactive_node(root, '', .true., .true., items, selected, &
+                                    item_idx, viewport_offset, viewport_end)
 
         ! Print help
         print '(A)', ''
@@ -164,12 +171,13 @@ contains
         call free_tree(root)
     end subroutine draw_interactive_tree
 
-    recursive subroutine print_interactive_node(node, prefix, is_last, is_root, items, selected, item_idx)
+    recursive subroutine print_interactive_node(node, prefix, is_last, is_root, items, selected, &
+                                                item_idx, viewport_offset, viewport_end)
         type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: prefix
         logical, intent(in) :: is_last, is_root
         type(selectable_item), intent(in) :: items(:)
-        integer, intent(in) :: selected
+        integer, intent(in) :: selected, viewport_offset, viewport_end
         integer, intent(inout) :: item_idx
 
         character(len=1024) :: line
@@ -208,40 +216,43 @@ contains
             item_idx = item_idx + 1
             is_selected = (item_idx == selected)
 
-            ! Build line with appropriate branch character
-            if (is_last) then
-                line = prefix // branch_last // ' '
-            else
-                line = prefix // branch_mid // ' '
-            end if
+            ! Only print if within viewport range
+            if (item_idx >= viewport_offset .and. item_idx <= viewport_end) then
+                ! Build line with appropriate branch character
+                if (is_last) then
+                    line = prefix // branch_last // ' '
+                else
+                    line = prefix // branch_mid // ' '
+                end if
 
-            ! Add name with highlighting if selected
-            if (is_selected) then
-                line = trim(line) // highlight_on // trim(node%name)
-                if (node%is_staged) then
-                    line = trim(line) // trim(mark_staged)
+                ! Add name with highlighting if selected
+                if (is_selected) then
+                    line = trim(line) // highlight_on // trim(node%name)
+                    if (node%is_staged) then
+                        line = trim(line) // trim(mark_staged)
+                    end if
+                    if (node%is_unstaged) then
+                        line = trim(line) // trim(mark_unstaged)
+                    end if
+                    if (node%is_untracked) then
+                        line = trim(line) // trim(mark_untracked)
+                    end if
+                    line = trim(line) // highlight_off
+                else
+                    line = trim(line) // trim(node%name)
+                    if (node%is_staged) then
+                        line = trim(line) // trim(mark_staged)
+                    end if
+                    if (node%is_unstaged) then
+                        line = trim(line) // trim(mark_unstaged)
+                    end if
+                    if (node%is_untracked) then
+                        line = trim(line) // trim(mark_untracked)
+                    end if
                 end if
-                if (node%is_unstaged) then
-                    line = trim(line) // trim(mark_unstaged)
-                end if
-                if (node%is_untracked) then
-                    line = trim(line) // trim(mark_untracked)
-                end if
-                line = trim(line) // highlight_off
-            else
-                line = trim(line) // trim(node%name)
-                if (node%is_staged) then
-                    line = trim(line) // trim(mark_staged)
-                end if
-                if (node%is_unstaged) then
-                    line = trim(line) // trim(mark_unstaged)
-                end if
-                if (node%is_untracked) then
-                    line = trim(line) // trim(mark_untracked)
-                end if
-            end if
 
-            print '(A)', trim(line)
+                print '(A)', trim(line)
+            end if
         end if
 
         ! Print children
@@ -260,7 +271,8 @@ contains
                 end if
             end if
 
-            call print_interactive_node(child, new_prefix, i == n_children, .false., items, selected, item_idx)
+            call print_interactive_node(child, new_prefix, i == n_children, .false., items, selected, &
+                                        item_idx, viewport_offset, viewport_end)
             child => child%next_sibling
         end do
     end subroutine print_interactive_node

@@ -64,4 +64,49 @@ contains
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine read_line
 
+    subroutine get_terminal_height(height)
+        integer, intent(out) :: height
+        integer :: iostat, unit_num, status
+        character(len=256) :: env_val
+
+        height = 24  ! Default fallback
+
+        ! Try method 1: Use stty size to get terminal dimensions
+        call execute_command_line('stty size < /dev/tty 2>/dev/null | cut -d" " -f1 > /tmp/fuss_term_height.txt', &
+                                  exitstat=status)
+
+        if (status == 0) then
+            open(newunit=unit_num, file='/tmp/fuss_term_height.txt', status='old', action='read', iostat=iostat)
+            if (iostat == 0) then
+                read(unit_num, *, iostat=iostat) height
+                close(unit_num, status='delete')
+                ! Sanity check
+                if (height >= 10 .and. height <= 200) return
+            end if
+        end if
+
+        ! Try method 2: tput lines
+        call execute_command_line('tput lines < /dev/tty > /tmp/fuss_term_height.txt 2>/dev/null', exitstat=status)
+
+        if (status == 0) then
+            open(newunit=unit_num, file='/tmp/fuss_term_height.txt', status='old', action='read', iostat=iostat)
+            if (iostat == 0) then
+                read(unit_num, *, iostat=iostat) height
+                close(unit_num, status='delete')
+                ! Sanity check
+                if (height >= 10 .and. height <= 200) return
+            end if
+        end if
+
+        ! Try method 3: $LINES environment variable
+        call get_environment_variable('LINES', env_val, status=iostat)
+        if (iostat == 0 .and. len_trim(env_val) > 0) then
+            read(env_val, *, iostat=iostat) height
+            if (iostat == 0 .and. height >= 10 .and. height <= 200) return
+        end if
+
+        ! Fallback
+        height = 24
+    end subroutine get_terminal_height
+
 end module terminal_module

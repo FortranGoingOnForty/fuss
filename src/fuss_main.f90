@@ -89,9 +89,16 @@ contains
         character(len=1) :: key
         logical :: running
         character(len=256) :: repo_name, branch_name
+        integer :: term_height, viewport_offset, visible_items
 
         ! Get repo and branch info
         call get_repo_info(repo_name, branch_name)
+
+        ! Get terminal height
+        call get_terminal_height(term_height)
+
+        ! DEBUG: Show terminal height
+        ! print '(A,I0)', 'DEBUG: Terminal height detected: ', term_height
 
         ! Get files
         if (show_all) then
@@ -108,8 +115,23 @@ contains
         ! Build flat list of items for navigation
         call build_item_list(files, n_files, items, n_items)
 
-        ! Initialize selection
+        ! Calculate visible items accurately
+        ! Fixed UI elements that take screen space:
+        !   Line 1: repo:branch (e.g., "fuss:trunk")
+        !   Line 2: blank line after repo
+        !   Line 3: "." root
+        !   Lines 4 to N-3: tree items (VIEWPORT)
+        !   Line N-2: blank line before help
+        !   Line N-1: help legend (↑=staged ✗=modified ✗=untracked)
+        !   Line N: help controls (j/k/↓/↑: navigate | ...)
+        ! Total fixed: 6 lines (2 + 1 + 3)
+        visible_items = term_height - 6
+        if (visible_items < 3) visible_items = 3  ! Absolute minimum
+        if (visible_items > n_items) visible_items = n_items  ! Don't exceed total items
+
+        ! Initialize selection and viewport at TOP of tree
         selected = 1
+        viewport_offset = 1
         running = .true.
 
         ! Enable raw terminal mode
@@ -117,9 +139,19 @@ contains
 
         ! Main interactive loop
         do while (running)
+            ! Center viewport on selection - keeps highlighted item in middle of screen
+            viewport_offset = selected - visible_items / 2
+
+            ! Clamp viewport to valid range
+            if (viewport_offset < 1) viewport_offset = 1
+            if (viewport_offset > n_items - visible_items + 1 .and. n_items > visible_items) then
+                viewport_offset = n_items - visible_items + 1
+            end if
+
             ! Clear screen and redraw
             call clear_screen()
-            call draw_interactive_tree(files, n_files, items, n_items, selected, repo_name, branch_name)
+            call draw_interactive_tree(files, n_files, items, n_items, selected, &
+                                       repo_name, branch_name, viewport_offset, visible_items)
 
             ! Read key
             call read_key(key)
