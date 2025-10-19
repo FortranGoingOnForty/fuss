@@ -459,6 +459,89 @@ contains
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status_code)
     end subroutine prompt_upstream_selection
 
+    subroutine add_incoming_files(files, n_files)
+        ! Adds files with incoming changes that aren't already in the dirty files list
+        type(file_entry), allocatable, intent(inout) :: files(:)
+        integer, intent(inout) :: n_files
+        integer :: iostat, unit_num, status_code, i, j
+        character(len=1024) :: line
+        character(len=512) :: incoming_path
+        logical :: already_exists, upstream_set
+        type(file_entry), allocatable :: temp_files(:)
+        integer :: max_files, original_count
+
+        ! Check if there's an upstream branch configured
+        call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status_code)
+        if (status_code /= 0) then
+            ! No upstream configured - prompt user to select one
+            call prompt_upstream_selection(upstream_set)
+            if (.not. upstream_set) return
+        end if
+
+        ! Get list of files that differ between HEAD and upstream
+        call execute_command_line('git diff --name-only HEAD...@{upstream} > /tmp/fuss_incoming.txt 2>/dev/null', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) return
+
+        open(newunit=unit_num, file='/tmp/fuss_incoming.txt', status='old', action='read', iostat=iostat)
+        if (iostat /= 0) return
+
+        ! Count current files and prepare to add more
+        original_count = n_files
+        max_files = n_files + 100  ! Reserve space for incoming files
+        allocate(temp_files(max_files))
+
+        ! Copy existing files
+        if (n_files > 0) temp_files(1:n_files) = files(1:n_files)
+
+        do
+            read(unit_num, '(A)', iostat=iostat) line
+            if (iostat /= 0) exit
+
+            if (len_trim(line) > 0) then
+                incoming_path = trim(line)
+
+                ! Check if this file already exists in the list
+                already_exists = .false.
+                do i = 1, n_files
+                    if (trim(temp_files(i)%path) == trim(incoming_path)) then
+                        temp_files(i)%has_incoming = .true.
+                        already_exists = .true.
+                        exit
+                    end if
+                end do
+
+                ! If not in list, add it as a clean file with incoming changes
+                if (.not. already_exists) then
+                    n_files = n_files + 1
+                    if (n_files > max_files) then
+                        max_files = max_files * 2
+                        call resize_array(temp_files, max_files)
+                    end if
+
+                    temp_files(n_files)%path = trim(incoming_path)
+                    temp_files(n_files)%status = '  '  ! Clean locally
+                    temp_files(n_files)%is_staged = .false.
+                    temp_files(n_files)%is_unstaged = .false.
+                    temp_files(n_files)%is_untracked = .false.
+                    temp_files(n_files)%has_incoming = .true.
+                end if
+            end if
+        end do
+
+        close(unit_num, status='delete')
+
+        ! Copy back to files array if we added new files
+        if (n_files > original_count) then
+            deallocate(files)
+            allocate(files(n_files))
+            files(1:n_files) = temp_files(1:n_files)
+        end if
+
+        deallocate(temp_files)
+    end subroutine add_incoming_files
+
     subroutine mark_incoming_changes(files, n_files)
         type(file_entry), intent(inout) :: files(:)
         integer, intent(in) :: n_files

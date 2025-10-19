@@ -221,13 +221,15 @@ contains
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('f')  ! Git fetch
                 call git_fetch()
-                ! Refresh files after fetch
+                ! Refresh files after fetch and include files with incoming changes
                 if (show_all) then
                     call get_all_files(files, n_files)
+                    call mark_incoming_changes(files, n_files)
                 else
+                    ! In non-all mode, add files that only have incoming changes
                     call get_dirty_files(files, n_files)
+                    call add_incoming_files(files, n_files)
                 end if
-                call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('d')  ! Git diff with less
@@ -236,15 +238,18 @@ contains
                 end if
             case ('l')  ! Git pull
                 call git_pull()
-                ! Refresh files after pull
+                ! Refresh files after pull (incoming indicators will automatically clear)
                 if (show_all) then
                     call get_all_files(files, n_files)
+                    call mark_incoming_changes(files, n_files)
                 else
                     call get_dirty_files(files, n_files)
+                    call add_incoming_files(files, n_files)
                 end if
-                call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items)
                 if (selected > n_items .and. n_items > 0) selected = n_items
+                ! Note: After successful pull, git diff will show no upstream differences
+                ! so has_incoming will be .false. for all files automatically
             case ('q', 'Q')  ! Quit
                 running = .false.
             end select
