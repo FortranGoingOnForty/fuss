@@ -1,15 +1,19 @@
 # fuss
 
-An interactive tree utility for quickly staging dirty git files, written in modern Fortran.
+An interactive tree utility for complete git workflows, written in modern Fortran.
 
 ## Features
 
-- Shows a tree structure of dirty git files (modified, untracked, etc.)
+- Shows a tree structure of git files (modified, staged, untracked)
 - Proper UTF-8 tree rendering with box-drawing characters (`├──`, `└──`, `│`)
-- Marks dirty files with `✗`
-- Supports `--all` flag to show all files (with dirty files marked)
+- **Color-coded status indicators:**
+  - Green `↑` - Staged changes (ready to commit)
+  - Red `✗` - Modified tracked files
+  - Dim grey `✗` - Untracked files
+- Supports `--all`/`-a` flag to show all files (with status marked)
 - Alphabetically sorted output matching the `tree` command format
-- **Interactive mode** (`-i`/`--interactive`) with keyboard navigation and instant git add
+- **Interactive mode** with full git workflow: stage, unstage, commit, push, and status view
+- **Modular Fortran architecture** for maintainability and extensibility
 
 ## Building
 
@@ -27,29 +31,41 @@ Show only dirty files (default):
 Show all files with dirty ones marked:
 ```bash
 ./fuss --all
+./fuss -a       # Shorthand
 ```
 
-Interactive mode (navigate and git add files):
+Interactive mode (full git workflow):
 ```bash
 ./fuss -i
 ./fuss --interactive
-./fuss -i --all    # Interactive mode with all files
+./fuss -i -a    # Interactive mode with all files
 ```
 
 ### Interactive Mode Controls
 
+**Navigation:**
 - `j` or `↓`: Move down
 - `k` or `↑`: Move up
-- `Enter`: Git add the selected dirty file
+
+**Git Operations:**
+- `a`: Stage file (git add)
+- `u`: Unstage file (git restore --staged)
+- `m`: Commit with message prompt
+- `p`: Push to remote
+- `s`: View full git status (scrollable with `less`)
+
+**Other:**
 - `q`: Quit interactive mode
 ## Example Output
+
+### Normal Mode
 
 Dirty files only:
 ```
 .
-├── README.md ✗
-├── fuss ✗
-└── fuss.f90 ✗
+├── README.md ✗      # Red ✗ = modified
+├── fuss.f90 ✗       # Red ✗ = modified
+└── new_file.txt ✗   # Grey ✗ = untracked
 ```
 
 All files:
@@ -57,19 +73,57 @@ All files:
 .
 ├── .gitignore
 ├── Makefile
-├── README.md ✗
-├── fuss ✗
-├── fuss.f90 ✗
+├── README.md ✗      # Red ✗ = modified
+├── fuss ↑           # Green ↑ = staged
+├── fuss.f90 ↑✗      # Both staged AND unstaged changes
 └── fuss.o
 ```
 
-Files marked with `✗` are dirty (modified or untracked).
+### Interactive Mode
+
+```
+fuss:trunk           # Cyan repo name : Yellow branch name
+
+.
+├── README.md ✗      # ← Currently selected (highlighted)
+├── fuss.f90 ↑
+└── src
+    └── main.f90 ✗
+
+↑=staged ✗=modified ✗=untracked
+j/k/↓/↑: navigate | a: stage | u: unstage | m: commit | p: push | s: status | q: quit
+```
+
+**Status Indicators:**
+- Green `↑` - Staged (ready to commit)
+- Red `✗` - Modified tracked file
+- Dim grey `✗` - Untracked file
+- `↑✗` - File has both staged and unstaged changes
 
 ### Interactive Mode Details
 
-Interactive mode provides a TUI (Text User Interface) for staging files:
-- Uses `stty raw -echo` to enable raw terminal input
-- ANSI escape codes (`ESC[7m` / `ESC[0m`) for reverse video highlighting
-- Reads arrow key escape sequences (`ESC[A`, `ESC[B`)
-- Executes `git add` commands and refreshes the view automatically
+Interactive mode provides a complete git workflow TUI:
+
+- Repository and branch name in status bar (`repo:branch`)
+- Tree navigation through all files and directories
+- Color-coded status indicators (staged, modified, untracked)
+- Visual highlighting of selected item
+
+**Git Workflow:**
+- **Stage** (`a`) - Add files to staging area with `git add`
+- **Unstage** (`u`) - Remove from staging with `git restore --staged`
+- **Commit** (`m`) - Interactive commit message prompt
+- **Push** (`p`) - Push commits to remote repository
+- **Status** (`s`) - View full `git status` output in scrollable `less` viewer
+
+**Technical Details:**
+- Uses `stty cbreak -echo` for character-by-character input with proper newline handling
+- ANSI escape codes for colors and highlighting (`ESC[7m` for selection, `ESC[31m` for red, etc.)
+- Reads arrow key escape sequences (`ESC[A`, `ESC[B` for up/down)
+- Automatically refreshes view after git operations
 - Restores terminal with `stty sane` on exit
+
+**Directory Expansion:**
+- Automatically expands untracked directories (e.g., `dir/` → shows all files inside)
+- Proper nested directory tree structure maintained
+
