@@ -16,6 +16,9 @@ MAIN_OBJ = $(BUILD_DIR)/fuss_main.o
 # Target executable
 TARGET = $(BIN_DIR)/fuss
 
+# Disable parallel builds to ensure proper module compilation order
+.NOTPARALLEL:
+
 .PHONY: all clean
 
 all: $(TARGET)
