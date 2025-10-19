@@ -1,4 +1,5 @@
 # fuss
+(noun) : the quicker picker upper
 
 An interactive tree utility for complete git workflows, written in modern Fortran.
 
