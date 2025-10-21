@@ -466,16 +466,16 @@ contains
         integer :: iostat, unit_num, status_code, i, j
         character(len=1024) :: line
         character(len=512) :: incoming_path
-        logical :: already_exists, upstream_set
+        logical :: already_exists
         type(file_entry), allocatable :: temp_files(:)
         integer :: max_files, original_count
 
         ! Check if there's an upstream branch configured
+        ! Don't prompt - this is called automatically during refresh
         call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status_code)
         if (status_code /= 0) then
-            ! No upstream configured - prompt user to select one
-            call prompt_upstream_selection(upstream_set)
-            if (.not. upstream_set) return
+            ! No upstream configured - silently return
+            return
         end if
 
         ! Get list of files that differ between HEAD and upstream
@@ -548,14 +548,13 @@ contains
         integer :: iostat, unit_num, status_code, i
         character(len=1024) :: line
         character(len=512) :: incoming_path
-        logical :: upstream_set
 
         ! Check if there's an upstream branch configured
+        ! Don't prompt - this is called automatically during refresh
         call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status_code)
         if (status_code /= 0) then
-            ! No upstream configured - prompt user to select one
-            call prompt_upstream_selection(upstream_set)
-            if (.not. upstream_set) return
+            ! No upstream configured - silently return
+            return
         end if
 
         ! Get list of files that differ between HEAD and upstream
