@@ -698,4 +698,33 @@ contains
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine git_diff_file
 
+    subroutine git_tag(tag_name, tag_message, success)
+        character(len=*), intent(in) :: tag_name
+        character(len=*), intent(in) :: tag_message
+        logical, intent(out) :: success
+        integer :: status
+        character(len=2048) :: command
+
+        success = .false.
+
+        if (len_trim(tag_message) > 0) then
+            ! Create annotated tag with message
+            write(command, '(A,A,A,A,A)') 'git tag -a "', trim(tag_name), '" -m "', trim(tag_message), '" 2>&1'
+        else
+            ! Create lightweight tag (no message)
+            write(command, '(A,A,A)') 'git tag "', trim(tag_name), '" 2>&1'
+        end if
+
+        call execute_command_line(trim(command), exitstat=status)
+
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ Tag created: ' // trim(tag_name) // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Failed to create tag' // achar(27) // '[0m'
+        end if
+
+        call execute_command_line('sleep 1', exitstat=status)
+    end subroutine git_tag
+
 end module git_module

@@ -219,6 +219,8 @@ contains
                 call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items)
                 if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('t')  ! Tag (lowercase)
+                call tag_prompt()
             case ('f')  ! Git fetch
                 call git_fetch()
                 ! Refresh files after fetch and include files with incoming changes
@@ -406,5 +408,30 @@ contains
         ! Wait for keypress to continue
         call read_key(key)
     end subroutine push_prompt
+
+    subroutine tag_prompt()
+        character(len=512) :: tag_name, tag_message
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for tag prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mGit Tag' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Read tag name
+        call read_line('Tag name: ', tag_name)
+
+        ! Execute tag if name is not empty
+        if (len_trim(tag_name) > 0) then
+            ! Read tag message (optional)
+            call read_line('Tag message (enter for none): ', tag_message)
+
+            call git_tag(tag_name, tag_message, success)
+
+            ! Wait for keypress to continue
+            call read_key(key)
+        end if
+    end subroutine tag_prompt
 
 end program fuss
