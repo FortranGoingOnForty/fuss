@@ -9,6 +9,7 @@ program fuss
         logical :: is_staged
         logical :: is_unstaged
         logical :: is_untracked
+        logical :: has_incoming
         type(tree_node), pointer :: first_child => null()
         type(tree_node), pointer :: next_sibling => null()
     end type tree_node
@@ -19,6 +20,7 @@ program fuss
         logical :: is_staged
         logical :: is_unstaged
         logical :: is_untracked
+        logical :: has_incoming
     end type file_entry
 
     type :: selectable_item
@@ -26,6 +28,7 @@ program fuss
         logical :: is_staged
         logical :: is_unstaged
         logical :: is_untracked
+        logical :: has_incoming
         logical :: is_file
     end type selectable_item
 
@@ -93,6 +96,9 @@ contains
         else
             call get_dirty_files(files, n_files)
         end if
+
+        ! Mark files with incoming changes
+        call mark_incoming_changes(files, n_files)
 
         ! Display the tree
         if (n_files > 0) then
@@ -167,6 +173,7 @@ contains
                 temp_files(n_files)%is_untracked = (git_status == '??')
                 temp_files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
                 temp_files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. temp_files(n_files)%is_untracked)
+                temp_files(n_files)%has_incoming = .false.
             end if
         end do
 
@@ -242,6 +249,7 @@ contains
                 temp_files(n_files)%is_staged = .false.
                 temp_files(n_files)%is_unstaged = .false.
                 temp_files(n_files)%is_untracked = .false.
+                temp_files(n_files)%has_incoming = .false.
                 do i = 1, n_dirty
                     if (trim(dirty_files(i)%path) == trim(line)) then
                         is_dirty_file = .true.
@@ -249,6 +257,7 @@ contains
                         temp_files(n_files)%is_staged = dirty_files(i)%is_staged
                         temp_files(n_files)%is_unstaged = dirty_files(i)%is_unstaged
                         temp_files(n_files)%is_untracked = dirty_files(i)%is_untracked
+                        temp_files(n_files)%has_incoming = dirty_files(i)%has_incoming
                         exit
                     end if
                 end do
@@ -264,6 +273,51 @@ contains
         deallocate(temp_files)
         if (allocated(dirty_files)) deallocate(dirty_files)
     end subroutine get_all_files
+
+    subroutine mark_incoming_changes(files, n_files)
+        type(file_entry), intent(inout) :: files(:)
+        integer, intent(in) :: n_files
+        integer :: iostat, unit_num, status_code, i
+        character(len=1024) :: line
+        character(len=512) :: incoming_path
+
+        ! Check if there's an upstream branch configured
+        call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status_code)
+        if (status_code /= 0) then
+            ! No upstream configured, no incoming changes possible
+            return
+        end if
+
+        ! Get list of files that differ between HEAD and upstream
+        call execute_command_line('git diff --name-only HEAD...@{upstream} > /tmp/fuss_incoming.txt 2>/dev/null', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            ! If diff fails, no incoming changes
+            return
+        end if
+
+        open(newunit=unit_num, file='/tmp/fuss_incoming.txt', status='old', action='read', iostat=iostat)
+        if (iostat /= 0) return
+
+        do
+            read(unit_num, '(A)', iostat=iostat) line
+            if (iostat /= 0) exit
+
+            if (len_trim(line) > 0) then
+                incoming_path = trim(line)
+                ! Mark this file as having incoming changes
+                do i = 1, n_files
+                    if (trim(files(i)%path) == trim(incoming_path)) then
+                        files(i)%has_incoming = .true.
+                        exit
+                    end if
+                end do
+            end if
+        end do
+
+        close(unit_num, status='delete')
+    end subroutine mark_incoming_changes
 
     subroutine resize_array(array, new_size)
         type(file_entry), allocatable, intent(inout) :: array(:)
@@ -323,6 +377,7 @@ contains
                 files(n_files)%is_untracked = (git_status == '??')
                 files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
                 files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. files(n_files)%is_untracked)
+                files(n_files)%has_incoming = .false.
             end if
         end do
 
@@ -342,12 +397,13 @@ contains
         root%is_staged = .false.
         root%is_unstaged = .false.
         root%is_untracked = .false.
+        root%has_incoming = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         ! Build tree
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
         end do
 
         ! Sort tree (directories first, then alphabetically)
@@ -374,6 +430,9 @@ contains
         else
             call get_dirty_files(files, n_files)
         end if
+
+        ! Mark files with incoming changes
+        call mark_incoming_changes(files, n_files)
 
         if (n_files == 0) then
             print '(A)', 'No files to display'
@@ -414,10 +473,37 @@ contains
                     else
                         call get_dirty_files(files, n_files)
                     end if
+                    call mark_incoming_changes(files, n_files)
                     call build_item_list(files, n_files, items, n_items)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
+            case ('f', 'F')  ! Git fetch
+                call git_fetch()
+                ! Refresh files after fetch to update incoming indicators
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('d', 'D')  ! Git diff with less
+                if (items(selected)%is_file) then
+                    call git_diff_file(items(selected)%path)
+                end if
+            case ('l', 'L')  ! Git pull
+                call git_pull()
+                ! Refresh files after pull
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items)
+                if (selected > n_items .and. n_items > 0) selected = n_items
             case ('q', 'Q')  ! Quit
                 running = .false.
             end select
@@ -447,11 +533,12 @@ contains
         root%is_staged = .false.
         root%is_unstaged = .false.
         root%is_untracked = .false.
+        root%has_incoming = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
         end do
 
         call sort_tree(root)
@@ -501,6 +588,7 @@ contains
             items(n_items)%is_staged = node%is_staged
             items(n_items)%is_unstaged = node%is_unstaged
             items(n_items)%is_untracked = node%is_untracked
+            items(n_items)%has_incoming = node%has_incoming
         else
             full_path = ''
         end if
@@ -591,6 +679,68 @@ contains
         call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_add_file
 
+    subroutine git_fetch()
+        integer :: status
+
+        ! Restore terminal temporarily for git output
+        call disable_raw_mode()
+
+        ! Run git fetch
+        print '(A)', 'Fetching from remote...'
+        call execute_command_line('git fetch', exitstat=status)
+
+        if (status == 0) then
+            print '(A)', 'Fetch completed successfully!'
+        else
+            print '(A)', 'Fetch failed!'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 1', exitstat=status)
+
+        ! Re-enable raw mode
+        call enable_raw_mode()
+    end subroutine git_fetch
+
+    subroutine git_pull()
+        integer :: status
+
+        ! Restore terminal temporarily for git output
+        call disable_raw_mode()
+
+        ! Run git pull
+        print '(A)', 'Pulling from remote...'
+        call execute_command_line('git pull', exitstat=status)
+
+        if (status == 0) then
+            print '(A)', 'Pull completed successfully!'
+        else
+            print '(A)', 'Pull failed!'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 1', exitstat=status)
+
+        ! Re-enable raw mode
+        call enable_raw_mode()
+    end subroutine git_pull
+
+    subroutine git_diff_file(filepath)
+        character(len=*), intent(in) :: filepath
+        character(len=1024) :: command
+        integer :: status
+
+        ! Restore terminal temporarily for less
+        call disable_raw_mode()
+
+        ! Show diff with less
+        write(command, '(A,A,A)') 'git diff HEAD...@{upstream} -- "', trim(filepath), '" | less -R'
+        call execute_command_line(trim(command), exitstat=status)
+
+        ! Re-enable raw mode
+        call enable_raw_mode()
+    end subroutine git_diff_file
+
     subroutine draw_interactive_tree(files, n_files, items, n_items, selected)
         type(file_entry), intent(in) :: files(:)
         integer, intent(in) :: n_files, n_items, selected
@@ -605,11 +755,12 @@ contains
         root%is_staged = .false.
         root%is_unstaged = .false.
         root%is_untracked = .false.
+        root%has_incoming = .false.
         root%first_child => null()
         root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
         end do
 
         call sort_tree(root)
@@ -620,12 +771,13 @@ contains
         call print_interactive_node(root, '', .true., .true., items, &
                                    selected, item_idx)
 
-        ! Print help
+        ! Print help (two rows for better readability)
         print '(A)', ''
-        print '(A)', achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
+        print '(A)', 'Legend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
                      achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
-                     achar(27) // '[90m✗' // achar(27) // '[0m=untracked'
-        print '(A)', 'j/↓: down | k/↑: up | Space: stage file | q: quit'
+                     achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
+                     achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
+        print '(A)', 'Keys: j/k/↑/↓:nav | Space:stage | f:fetch | d:diff | l:pull | q:quit'
 
         call free_tree(root)
     end subroutine draw_interactive_tree
@@ -656,11 +808,13 @@ contains
         character(len=50) :: mark_unstaged
         character(len=50) :: mark_untracked
         character(len=50) :: mark_staged
+        character(len=50) :: mark_incoming
 
         ! Initialize colored marks with explicit ESC characters
         write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'  ! Red for modified
         write(mark_untracked, '(A,A,A,A,A)') ESC, '[90m', ' ✗', ESC, '[0m'  ! Dim grey for untracked
         write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'  ! Green for staged
+        write(mark_incoming, '(A,A,A,A,A)') ESC, '[34m', ' ↓', ESC, '[0m'  ! Blue for incoming
 
         ! Count children first
         n_children = 0
@@ -696,6 +850,9 @@ contains
                 if (node%is_untracked) then
                     line = trim(line) // trim(mark_untracked)
                 end if
+                if (node%has_incoming) then
+                    line = trim(line) // trim(mark_incoming)
+                end if
                 line = trim(line) // highlight_off
             else
                 line = trim(line) // trim(node%name)
@@ -708,6 +865,9 @@ contains
                 end if
                 if (node%is_untracked) then
                     line = trim(line) // trim(mark_untracked)
+                end if
+                if (node%has_incoming) then
+                    line = trim(line) // trim(mark_incoming)
                 end if
             end if
 
@@ -820,10 +980,10 @@ contains
         before = (trim(a%name) < trim(b%name))
     end function should_insert_before
 
-    recursive subroutine add_to_tree(node, path, is_staged, is_unstaged, is_untracked)
+    recursive subroutine add_to_tree(node, path, is_staged, is_unstaged, is_untracked, has_incoming)
         type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: path
-        logical, intent(in) :: is_staged, is_unstaged, is_untracked
+        logical, intent(in) :: is_staged, is_unstaged, is_untracked, has_incoming
 
         integer :: slash_pos, iostat
         character(len=512) :: first_part, rest
@@ -843,6 +1003,7 @@ contains
                     child%is_staged = child%is_staged .or. is_staged
                     child%is_unstaged = child%is_unstaged .or. is_unstaged
                     child%is_untracked = child%is_untracked .or. is_untracked
+                    child%has_incoming = child%has_incoming .or. has_incoming
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -869,6 +1030,7 @@ contains
             new_child%is_staged = is_staged
             new_child%is_unstaged = is_unstaged
             new_child%is_untracked = is_untracked
+            new_child%has_incoming = has_incoming
             new_child%first_child => null()
             new_child%next_sibling => null()
 
@@ -886,7 +1048,7 @@ contains
             child => node%first_child
             do while (associated(child))
                 if (trim(child%name) == trim(first_part)) then
-                    call add_to_tree(child, rest, is_staged, is_unstaged, is_untracked)
+                    call add_to_tree(child, rest, is_staged, is_unstaged, is_untracked, has_incoming)
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -900,6 +1062,7 @@ contains
             new_child%is_staged = .false.
             new_child%is_unstaged = .false.
             new_child%is_untracked = .false.
+            new_child%has_incoming = .false.
             new_child%first_child => null()
             new_child%next_sibling => null()
 
@@ -909,7 +1072,7 @@ contains
                 child%next_sibling => new_child
             end if
 
-            call add_to_tree(new_child, rest, is_staged, is_unstaged, is_untracked)
+            call add_to_tree(new_child, rest, is_staged, is_unstaged, is_untracked, has_incoming)
         end if
     end subroutine add_to_tree
 
@@ -933,11 +1096,13 @@ contains
         character(len=50) :: mark_unstaged
         character(len=50) :: mark_untracked
         character(len=50) :: mark_staged
+        character(len=50) :: mark_incoming
 
         ! Initialize colored marks with explicit ESC characters
         write(mark_unstaged, '(A,A,A,A,A)') ESC, '[31m', ' ✗', ESC, '[0m'  ! Red for modified
         write(mark_untracked, '(A,A,A,A,A)') ESC, '[90m', ' ✗', ESC, '[0m'  ! Dim grey for untracked
         write(mark_staged, '(A,A,A,A,A)') ESC, '[32m', ' ↑', ESC, '[0m'  ! Green for staged
+        write(mark_incoming, '(A,A,A,A,A)') ESC, '[34m', ' ↓', ESC, '[0m'  ! Blue for incoming
 
         ! Count children first
         n_children = 0
@@ -964,6 +1129,9 @@ contains
             end if
             if (node%is_untracked) then
                 line = trim(line) // trim(mark_untracked)
+            end if
+            if (node%has_incoming) then
+                line = trim(line) // trim(mark_incoming)
             end if
             print '(A)', trim(line)
         end if
