@@ -304,12 +304,13 @@ contains
             else
                 print '(A)', achar(27) // '[31m✗ Failed to delete: ' // trim(filepath) // achar(27) // '[0m'
             end if
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
         else
             print '(A)', 'Delete cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
         end if
-
-        ! Brief pause to show message
-        call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_delete_file
 
     subroutine git_commit_with_message(message, success)
