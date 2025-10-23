@@ -21,6 +21,7 @@ contains
         root%is_unstaged = .false.
         root%is_untracked = .false.
         root%has_incoming = .false.
+        root%is_expanded = .true.  ! Root is always expanded
         root%first_child => null()
         root%next_sibling => null()
 
@@ -120,33 +121,15 @@ contains
         end do
     end subroutine print_tree_node
 
-    subroutine draw_interactive_tree(files, n_files, items, n_items, selected, &
+    subroutine draw_interactive_tree(tree_root, items, n_items, selected, &
                                      repo_name, branch_name, viewport_offset, visible_items)
-        type(file_entry), intent(in) :: files(:)
-        integer, intent(in) :: n_files, n_items, selected
+        type(tree_node), pointer, intent(in) :: tree_root
+        integer, intent(in) :: n_items, selected
         type(selectable_item), intent(in) :: items(:)
         character(len=*), intent(in) :: repo_name, branch_name
         integer, intent(in) :: viewport_offset, visible_items
-        type(tree_node), pointer :: root
-        integer :: i, item_idx, viewport_end
+        integer :: item_idx, viewport_end
         character(len=512) :: status_line
-
-        ! Build tree
-        allocate(root)
-        root%name = '.'
-        root%is_file = .false.
-        root%is_staged = .false.
-        root%is_unstaged = .false.
-        root%is_untracked = .false.
-        root%has_incoming = .false.
-        root%first_child => null()
-        root%next_sibling => null()
-
-        do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
-        end do
-
-        call sort_tree(root)
 
         ! Display repo:branch info at top if available
         if (len_trim(repo_name) > 0 .and. len_trim(branch_name) > 0) then
@@ -165,7 +148,7 @@ contains
         ! Print tree with selection highlighting
         item_idx = 0
         print '(A)', '.'
-        call print_interactive_node(root, '', .true., .true., items, selected, &
+        call print_interactive_node(tree_root, '', .true., .true., items, selected, &
                                     item_idx, viewport_offset, viewport_end)
 
         ! Print help (two rows for better readability)
@@ -174,9 +157,9 @@ contains
                      achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                      achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
                      achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
-        print '(A)', 'Keys: j/k/↑/↓:nav | a:stage | u:unstage | f:fetch | d:diff | r:delete | l:pull | m:commit | p:push | t:tag | s:status | q:quit'
+        print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:collapse/expand | a:stage | u:unstage | f:fetch | d:diff | r:delete | l:pull | m:commit | p:push | t:tag | s:status | q:quit'
 
-        call free_tree(root)
+        ! Don't free tree - it's owned by interactive_mode
     end subroutine draw_interactive_tree
 
     recursive subroutine print_interactive_node(node, prefix, is_last, is_root, items, selected, &
@@ -235,6 +218,15 @@ contains
                     line = prefix // branch_mid // ' '
                 end if
 
+                ! Add expand/collapse indicator for directories
+                if (.not. node%is_file) then
+                    if (node%is_expanded) then
+                        line = trim(line) // '▼ '
+                    else
+                        line = trim(line) // '▶ '
+                    end if
+                end if
+
                 ! Add name with highlighting if selected
                 if (is_selected) then
                     line = trim(line) // highlight_on // trim(node%name)
@@ -271,26 +263,28 @@ contains
             end if
         end if
 
-        ! Print children
-        i = 0
-        child => node%first_child
-        do while (associated(child))
-            i = i + 1
+        ! Print children only if expanded (or if this is root)
+        if (node%is_expanded) then
+            i = 0
+            child => node%first_child
+            do while (associated(child))
+                i = i + 1
 
-            if (is_root) then
-                new_prefix = ''
-            else
-                if (is_last) then
-                    new_prefix = prefix // '    '
+                if (is_root) then
+                    new_prefix = ''
                 else
-                    new_prefix = prefix // vertical // '   '
+                    if (is_last) then
+                        new_prefix = prefix // '    '
+                    else
+                        new_prefix = prefix // vertical // '   '
+                    end if
                 end if
-            end if
 
-            call print_interactive_node(child, new_prefix, i == n_children, .false., items, selected, &
+                call print_interactive_node(child, new_prefix, i == n_children, .false., items, selected, &
                                         item_idx, viewport_offset, viewport_end)
-            child => child%next_sibling
-        end do
+                child => child%next_sibling
+            end do
+        end if
     end subroutine print_interactive_node
 
     subroutine draw_status_view(status_lines, n_lines)

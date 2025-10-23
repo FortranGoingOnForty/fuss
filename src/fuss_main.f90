@@ -93,6 +93,10 @@ contains
         logical :: running
         character(len=256) :: repo_name, branch_name
         integer :: term_height, viewport_offset, visible_items
+        type(tree_node), pointer :: tree_root
+
+        ! Initialize tree pointer
+        tree_root => null()
 
         ! Get repo and branch info
         call get_repo_info(repo_name, branch_name)
@@ -119,7 +123,7 @@ contains
         end if
 
         ! Build flat list of items for navigation
-        call build_item_list(files, n_files, items, n_items)
+        call build_item_list(files, n_files, items, n_items, tree_root)
 
         ! Calculate visible items accurately
         ! Fixed UI elements that take screen space:
@@ -156,7 +160,7 @@ contains
 
             ! Clear screen and redraw
             call clear_screen()
-            call draw_interactive_tree(files, n_files, items, n_items, selected, &
+            call draw_interactive_tree(tree_root, items, n_items, selected, &
                                        repo_name, branch_name, viewport_offset, visible_items)
 
             ! Read key
@@ -168,6 +172,20 @@ contains
                 if (selected < n_items) selected = selected + 1
             case ('k', 'A')  ! k or up arrow
                 if (selected > 1) selected = selected - 1
+            case ('D')  ! Left arrow - collapse directory
+                if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
+                    items(selected)%node%is_expanded = .false.
+                    ! Rebuild item list to hide collapsed children (don't rebuild tree)
+                    call rebuild_item_list_from_tree(tree_root, items, n_items)
+                    if (selected > n_items) selected = n_items
+                end if
+            case ('C')  ! Right arrow - expand directory
+                if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
+                    items(selected)%node%is_expanded = .true.
+                    ! Rebuild item list to show newly expanded children (don't rebuild tree)
+                    call rebuild_item_list_from_tree(tree_root, items, n_items)
+                    if (selected > n_items) selected = n_items
+                end if
             case ('a')  ! Stage file (lowercase to avoid conflict with arrow A)
                 if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call git_add_file(items(selected)%path)
@@ -178,7 +196,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items)
+                    call build_item_list(files, n_files, items, n_items, tree_root)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
@@ -192,7 +210,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items)
+                    call build_item_list(files, n_files, items, n_items, tree_root)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                 end if
             case ('m')  ! Commit (lowercase)
@@ -204,7 +222,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items)
+                call build_item_list(files, n_files, items, n_items, tree_root)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('s')  ! Show git status (lowercase)
                 call show_status_view()
@@ -217,7 +235,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items)
+                call build_item_list(files, n_files, items, n_items, tree_root)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('t')  ! Tag (lowercase)
                 call tag_prompt()
@@ -232,7 +250,7 @@ contains
                     call get_dirty_files(files, n_files)
                     call add_incoming_files(files, n_files)
                 end if
-                call build_item_list(files, n_files, items, n_items)
+                call build_item_list(files, n_files, items, n_items, tree_root)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('d')  ! Git diff with less
                 if (items(selected)%is_file) then
@@ -248,7 +266,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items)
+                    call build_item_list(files, n_files, items, n_items, tree_root)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
@@ -262,7 +280,7 @@ contains
                     call get_dirty_files(files, n_files)
                     call add_incoming_files(files, n_files)
                 end if
-                call build_item_list(files, n_files, items, n_items)
+                call build_item_list(files, n_files, items, n_items, tree_root)
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 ! Note: After successful pull, git diff will show no upstream differences
                 ! so has_incoming will be .false. for all files automatically
@@ -274,36 +292,47 @@ contains
         ! Restore terminal
         call disable_raw_mode()
 
+        ! Free the tree
+        if (associated(tree_root)) then
+            call free_tree(tree_root)
+        end if
+
         ! Final display
         call clear_screen()
         call build_and_display_tree('', show_all)
     end subroutine interactive_mode
 
-    subroutine build_item_list(files, n_files, items, n_items)
+    subroutine build_item_list(files, n_files, items, n_items, tree_root)
         type(file_entry), intent(in) :: files(:)
         integer, intent(in) :: n_files
         type(selectable_item), allocatable, intent(out) :: items(:)
         integer, intent(out) :: n_items
-        type(tree_node), pointer :: root
+        type(tree_node), pointer, intent(inout) :: tree_root
         type(selectable_item), allocatable :: temp_items(:)
         integer :: i, max_items
 
-        ! Build the tree first
-        allocate(root)
-        root%name = '.'
-        root%is_file = .false.
-        root%is_staged = .false.
-        root%is_unstaged = .false.
-        root%is_untracked = .false.
-        root%has_incoming = .false.
-        root%first_child => null()
-        root%next_sibling => null()
+        ! Free old tree if it exists
+        if (associated(tree_root)) then
+            call free_tree(tree_root)
+        end if
+
+        ! Build new tree
+        allocate(tree_root)
+        tree_root%name = '.'
+        tree_root%is_file = .false.
+        tree_root%is_staged = .false.
+        tree_root%is_unstaged = .false.
+        tree_root%is_untracked = .false.
+        tree_root%has_incoming = .false.
+        tree_root%is_expanded = .true.  ! Root is always expanded
+        tree_root%first_child => null()
+        tree_root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
+            call add_to_tree(tree_root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
         end do
 
-        call sort_tree(root)
+        call sort_tree(tree_root)
 
         ! Collect items from tree in traversal order
         max_items = 1000
@@ -311,15 +340,36 @@ contains
         n_items = 0
 
         ! Traverse tree and collect all items
-        call collect_items_from_tree(root, '', temp_items, n_items, max_items)
+        call collect_items_from_tree(tree_root, '', temp_items, n_items, max_items)
 
         ! Copy to output
         allocate(items(n_items))
         if (n_items > 0) items(1:n_items) = temp_items(1:n_items)
         deallocate(temp_items)
 
-        call free_tree(root)
+        ! Don't free tree - it's kept alive for expand/collapse operations
     end subroutine build_item_list
+
+    subroutine rebuild_item_list_from_tree(tree_root, items, n_items)
+        type(tree_node), pointer, intent(in) :: tree_root
+        type(selectable_item), allocatable, intent(out) :: items(:)
+        integer, intent(out) :: n_items
+        type(selectable_item), allocatable :: temp_items(:)
+        integer :: max_items
+
+        ! Collect items from existing tree
+        max_items = 1000
+        allocate(temp_items(max_items))
+        n_items = 0
+
+        ! Traverse tree and collect all items
+        call collect_items_from_tree(tree_root, '', temp_items, n_items, max_items)
+
+        ! Copy to output
+        allocate(items(n_items))
+        if (n_items > 0) items(1:n_items) = temp_items(1:n_items)
+        deallocate(temp_items)
+    end subroutine rebuild_item_list_from_tree
 
     recursive subroutine collect_items_from_tree(node, parent_path, items, n_items, max_items)
         type(tree_node), pointer, intent(in) :: node
@@ -350,16 +400,19 @@ contains
             items(n_items)%is_unstaged = node%is_unstaged
             items(n_items)%is_untracked = node%is_untracked
             items(n_items)%has_incoming = node%has_incoming
+            items(n_items)%node => node  ! Store pointer to tree node
         else
             full_path = ''
         end if
 
-        ! Recursively add children
-        child => node%first_child
-        do while (associated(child))
-            call collect_items_from_tree(child, full_path, items, n_items, max_items)
-            child => child%next_sibling
-        end do
+        ! Recursively add children only if this node is expanded (or if it's root)
+        if (node%is_expanded) then
+            child => node%first_child
+            do while (associated(child))
+                call collect_items_from_tree(child, full_path, items, n_items, max_items)
+                child => child%next_sibling
+            end do
+        end if
     end subroutine collect_items_from_tree
 
     subroutine resize_item_array(items, max_items)

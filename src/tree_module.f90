@@ -53,6 +53,7 @@ contains
             new_child%is_unstaged = is_unstaged
             new_child%is_untracked = is_untracked
             new_child%has_incoming = has_incoming
+            new_child%is_expanded = .true.  ! Directories expanded by default
             new_child%first_child => null()
             new_child%next_sibling => null()
 
@@ -85,6 +86,7 @@ contains
             new_child%is_unstaged = .false.
             new_child%is_untracked = .false.
             new_child%has_incoming = .false.
+            new_child%is_expanded = .true.  ! Directories expanded by default
             new_child%first_child => null()
             new_child%next_sibling => null()
 
