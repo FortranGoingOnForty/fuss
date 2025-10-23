@@ -271,6 +271,47 @@ contains
         call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_unstage_file
 
+    subroutine git_delete_file(filepath, is_untracked, deleted)
+        use terminal_module, only: read_key
+        character(len=*), intent(in) :: filepath
+        logical, intent(in) :: is_untracked
+        logical, intent(out) :: deleted
+        character(len=1024) :: command
+        character(len=1) :: key
+        integer :: status
+
+        deleted = .false.
+
+        ! Prompt for confirmation
+        print '(A)', 'Delete ' // trim(filepath) // '? Press ''y'' to confirm, any other key to cancel.'
+
+        ! Read single key
+        call read_key(key)
+
+        ! Check if user confirmed
+        if (key == 'y' .or. key == 'Y') then
+            ! For untracked files, use rm; for tracked files, use git rm
+            if (is_untracked) then
+                write(command, '(A,A,A)') 'rm -f "', trim(filepath), '" 2>&1'
+            else
+                write(command, '(A,A,A)') 'git rm -f "', trim(filepath), '" 2>&1'
+            end if
+            call execute_command_line(trim(command), exitstat=status)
+
+            if (status == 0) then
+                print '(A)', achar(27) // '[32m✓ Deleted: ' // trim(filepath) // achar(27) // '[0m'
+                deleted = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Failed to delete: ' // trim(filepath) // achar(27) // '[0m'
+            end if
+        else
+            print '(A)', 'Delete cancelled.'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 0.5', exitstat=status)
+    end subroutine git_delete_file
+
     subroutine git_commit_with_message(message, success)
         character(len=*), intent(in) :: message
         logical, intent(out) :: success

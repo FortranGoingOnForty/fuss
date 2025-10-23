@@ -238,6 +238,20 @@ contains
                 if (items(selected)%is_file) then
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
                 end if
+            case ('r')  ! Remove/delete file
+                if (items(selected)%is_file) then
+                    call delete_prompt(items(selected)%path, items(selected)%is_untracked)
+                    ! Refresh files after delete
+                    if (show_all) then
+                        call get_all_files(files, n_files)
+                    else
+                        call get_dirty_files(files, n_files)
+                    end if
+                    call mark_incoming_changes(files, n_files)
+                    call build_item_list(files, n_files, items, n_items)
+                    if (selected > n_items .and. n_items > 0) selected = n_items
+                    if (n_items == 0) running = .false.
+                end if
             case ('l')  ! Git pull
                 call git_pull()
                 ! Refresh files after pull (incoming indicators will automatically clear)
@@ -433,5 +447,23 @@ contains
             call read_key(key)
         end if
     end subroutine tag_prompt
+
+    subroutine delete_prompt(filepath, is_untracked)
+        character(len=*), intent(in) :: filepath
+        logical, intent(in) :: is_untracked
+        logical :: deleted
+        character(len=1) :: key
+
+        ! Clear screen for delete prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mDelete File' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Execute delete with confirmation
+        call git_delete_file(filepath, is_untracked, deleted)
+
+        ! Wait for keypress to continue
+        call read_key(key)
+    end subroutine delete_prompt
 
 end program fuss
