@@ -310,9 +310,15 @@ contains
         type(tree_node), pointer, intent(inout) :: tree_root
         type(selectable_item), allocatable :: temp_items(:)
         integer :: i, max_items
+        character(len=512), allocatable :: collapsed_paths(:)
+        integer :: n_collapsed, max_collapsed
 
-        ! Free old tree if it exists
+        ! Save collapsed state from old tree if it exists
+        n_collapsed = 0
+        max_collapsed = 100
+        allocate(collapsed_paths(max_collapsed))
         if (associated(tree_root)) then
+            call collect_collapsed_paths(tree_root, '', collapsed_paths, n_collapsed, max_collapsed)
             call free_tree(tree_root)
         end if
 
@@ -333,6 +339,12 @@ contains
         end do
 
         call sort_tree(tree_root)
+
+        ! Restore collapsed state to new tree
+        if (n_collapsed > 0) then
+            call restore_collapsed_state(tree_root, '', collapsed_paths, n_collapsed)
+        end if
+        deallocate(collapsed_paths)
 
         ! Collect items from tree in traversal order
         max_items = 1000
@@ -370,6 +382,89 @@ contains
         if (n_items > 0) items(1:n_items) = temp_items(1:n_items)
         deallocate(temp_items)
     end subroutine rebuild_item_list_from_tree
+
+    recursive subroutine collect_collapsed_paths(node, parent_path, collapsed_paths, n_collapsed, max_collapsed)
+        type(tree_node), pointer, intent(in) :: node
+        character(len=*), intent(in) :: parent_path
+        character(len=512), allocatable, intent(inout) :: collapsed_paths(:)
+        integer, intent(inout) :: n_collapsed, max_collapsed
+        type(tree_node), pointer :: child
+        character(len=512) :: full_path
+
+        ! Build full path for this node
+        if (len_trim(parent_path) == 0) then
+            full_path = trim(node%name)
+        else
+            full_path = trim(parent_path) // '/' // trim(node%name)
+        end if
+
+        ! If this is a collapsed directory, save its path
+        if (.not. node%is_file .and. .not. node%is_expanded) then
+            n_collapsed = n_collapsed + 1
+            if (n_collapsed > max_collapsed) then
+                ! Resize array
+                call resize_path_array(collapsed_paths, max_collapsed)
+            end if
+            collapsed_paths(n_collapsed) = trim(full_path)
+        end if
+
+        ! Recursively check children
+        child => node%first_child
+        do while (associated(child))
+            call collect_collapsed_paths(child, full_path, collapsed_paths, n_collapsed, max_collapsed)
+            child => child%next_sibling
+        end do
+    end subroutine collect_collapsed_paths
+
+    subroutine resize_path_array(paths, max_size)
+        character(len=512), allocatable, intent(inout) :: paths(:)
+        integer, intent(inout) :: max_size
+        character(len=512), allocatable :: temp_paths(:)
+        integer :: old_size
+
+        old_size = max_size
+        allocate(temp_paths(old_size))
+        temp_paths = paths(1:old_size)
+        deallocate(paths)
+        max_size = max_size * 2
+        allocate(paths(max_size))
+        paths(1:old_size) = temp_paths
+        deallocate(temp_paths)
+    end subroutine resize_path_array
+
+    recursive subroutine restore_collapsed_state(node, parent_path, collapsed_paths, n_collapsed)
+        type(tree_node), pointer, intent(inout) :: node
+        character(len=*), intent(in) :: parent_path
+        character(len=512), intent(in) :: collapsed_paths(:)
+        integer, intent(in) :: n_collapsed
+        type(tree_node), pointer :: child
+        character(len=512) :: full_path
+        integer :: i
+
+        ! Build full path for this node
+        if (len_trim(parent_path) == 0) then
+            full_path = trim(node%name)
+        else
+            full_path = trim(parent_path) // '/' // trim(node%name)
+        end if
+
+        ! Check if this directory should be collapsed
+        if (.not. node%is_file) then
+            do i = 1, n_collapsed
+                if (trim(collapsed_paths(i)) == trim(full_path)) then
+                    node%is_expanded = .false.
+                    exit
+                end if
+            end do
+        end if
+
+        ! Recursively restore for children
+        child => node%first_child
+        do while (associated(child))
+            call restore_collapsed_state(child, full_path, collapsed_paths, n_collapsed)
+            child => child%next_sibling
+        end do
+    end subroutine restore_collapsed_state
 
     recursive subroutine collect_items_from_tree(node, parent_path, items, n_items, max_items)
         type(tree_node), pointer, intent(in) :: node
