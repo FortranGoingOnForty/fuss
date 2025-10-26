@@ -340,8 +340,9 @@ contains
 
         call sort_tree(tree_root)
 
-        ! Restore collapsed state to new tree
+        ! Restore collapsed state to new tree (sort first for binary search optimization)
         if (n_collapsed > 0) then
+            call quicksort_collapsed_paths(collapsed_paths, 1, n_collapsed)
             call restore_collapsed_state(tree_root, '', collapsed_paths, n_collapsed)
         end if
         deallocate(collapsed_paths)
@@ -432,6 +433,75 @@ contains
         deallocate(temp_paths)
     end subroutine resize_path_array
 
+    ! ========== Performance Optimization: Binary Search for Collapsed Paths ==========
+    recursive subroutine quicksort_collapsed_paths(arr, low, high)
+        character(len=512), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer :: pivot_idx
+
+        if (low < high) then
+            call partition_collapsed_paths(arr, low, high, pivot_idx)
+            call quicksort_collapsed_paths(arr, low, pivot_idx - 1)
+            call quicksort_collapsed_paths(arr, pivot_idx + 1, high)
+        end if
+    end subroutine quicksort_collapsed_paths
+
+    subroutine partition_collapsed_paths(arr, low, high, pivot_idx)
+        character(len=512), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer, intent(out) :: pivot_idx
+        character(len=512) :: pivot, temp
+        integer :: i, j
+
+        pivot = trim(arr(high))
+        i = low - 1
+
+        do j = low, high - 1
+            if (trim(arr(j)) <= pivot) then
+                i = i + 1
+                temp = arr(i)
+                arr(i) = arr(j)
+                arr(j) = temp
+            end if
+        end do
+
+        temp = arr(i + 1)
+        arr(i + 1) = arr(high)
+        arr(high) = temp
+
+        pivot_idx = i + 1
+    end subroutine partition_collapsed_paths
+
+    function binary_search_path(paths, n, target) result(index)
+        character(len=512), intent(in) :: paths(:)
+        integer, intent(in) :: n
+        character(len=*), intent(in) :: target
+        integer :: index
+        integer :: low, high, mid
+        character(len=512) :: target_trimmed, mid_val
+
+        index = -1
+        if (n == 0) return
+
+        target_trimmed = trim(target)
+        low = 1
+        high = n
+
+        do while (low <= high)
+            mid = low + (high - low) / 2
+            mid_val = trim(paths(mid))
+
+            if (mid_val == target_trimmed) then
+                index = mid
+                return
+            else if (mid_val < target_trimmed) then
+                low = mid + 1
+            else
+                high = mid - 1
+            end if
+        end do
+    end function binary_search_path
+
     recursive subroutine restore_collapsed_state(node, parent_path, collapsed_paths, n_collapsed)
         type(tree_node), pointer, intent(inout) :: node
         character(len=*), intent(in) :: parent_path
@@ -439,7 +509,7 @@ contains
         integer, intent(in) :: n_collapsed
         type(tree_node), pointer :: child
         character(len=512) :: full_path
-        integer :: i
+        integer :: idx
 
         ! Build full path for this node
         if (len_trim(parent_path) == 0) then
@@ -448,14 +518,12 @@ contains
             full_path = trim(parent_path) // '/' // trim(node%name)
         end if
 
-        ! Check if this directory should be collapsed
+        ! Check if this directory should be collapsed using binary search (O(log n) vs O(n))
         if (.not. node%is_file) then
-            do i = 1, n_collapsed
-                if (trim(collapsed_paths(i)) == trim(full_path)) then
-                    node%is_expanded = .false.
-                    exit
-                end if
-            end do
+            idx = binary_search_path(collapsed_paths, n_collapsed, full_path)
+            if (idx > 0) then
+                node%is_expanded = .false.
+            end if
         end if
 
         ! Recursively restore for children

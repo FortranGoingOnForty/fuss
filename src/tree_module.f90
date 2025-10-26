@@ -2,6 +2,11 @@ module tree_module
     use types_module
     implicit none
 
+    ! Helper type for array of pointers
+    type node_ptr
+        type(tree_node), pointer :: ptr
+    end type node_ptr
+
 contains
 
     recursive subroutine add_to_tree(node, path, is_staged, is_unstaged, is_untracked, has_incoming)
@@ -119,62 +124,84 @@ contains
 
     subroutine sort_children(node)
         type(tree_node), pointer :: node
-        type(tree_node), pointer :: sorted_head, sorted_tail
-        type(tree_node), pointer :: current, next_node, insert_pos, prev
-        logical :: inserted
+        type(tree_node), pointer :: current
+        type(node_ptr), allocatable :: children_array(:)
+        integer :: count, i
 
         if (.not. associated(node%first_child)) return
         if (.not. associated(node%first_child%next_sibling)) return
 
-        ! Build sorted list
-        sorted_head => null()
-        sorted_tail => null()
-
+        ! Count children
+        count = 0
         current => node%first_child
         do while (associated(current))
-            next_node => current%next_sibling
-
-            ! Insert current into sorted list
-            if (.not. associated(sorted_head)) then
-                ! First element
-                sorted_head => current
-                sorted_tail => current
-                current%next_sibling => null()
-            else
-                ! Find insertion point
-                inserted = .false.
-                prev => null()
-                insert_pos => sorted_head
-
-                do while (associated(insert_pos))
-                    if (should_insert_before(current, insert_pos)) then
-                        ! Insert before insert_pos
-                        current%next_sibling => insert_pos
-                        if (associated(prev)) then
-                            prev%next_sibling => current
-                        else
-                            sorted_head => current
-                        end if
-                        inserted = .true.
-                        exit
-                    end if
-                    prev => insert_pos
-                    insert_pos => insert_pos%next_sibling
-                end do
-
-                if (.not. inserted) then
-                    ! Insert at end
-                    sorted_tail%next_sibling => current
-                    sorted_tail => current
-                    current%next_sibling => null()
-                end if
-            end if
-
-            current => next_node
+            count = count + 1
+            current => current%next_sibling
         end do
 
-        node%first_child => sorted_head
+        ! Allocate array of pointers
+        allocate(children_array(count))
+
+        ! Fill array with pointers to children
+        current => node%first_child
+        do i = 1, count
+            children_array(i)%ptr => current
+            current => current%next_sibling
+        end do
+
+        ! Sort the array using quicksort
+        call quicksort_nodes(children_array, 1, count)
+
+        ! Rebuild linked list from sorted array
+        node%first_child => children_array(1)%ptr
+        do i = 1, count - 1
+            children_array(i)%ptr%next_sibling => children_array(i + 1)%ptr
+        end do
+        children_array(count)%ptr%next_sibling => null()
+
+        deallocate(children_array)
     end subroutine sort_children
+
+    recursive subroutine quicksort_nodes(arr, low, high)
+        type(node_ptr), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer :: pivot_idx
+
+        if (low < high) then
+            call partition_nodes(arr, low, high, pivot_idx)
+            call quicksort_nodes(arr, low, pivot_idx - 1)
+            call quicksort_nodes(arr, pivot_idx + 1, high)
+        end if
+    end subroutine quicksort_nodes
+
+    subroutine partition_nodes(arr, low, high, pivot_idx)
+        type(node_ptr), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer, intent(out) :: pivot_idx
+        type(tree_node), pointer :: pivot
+        type(node_ptr) :: temp
+        integer :: i, j
+
+        pivot => arr(high)%ptr
+        i = low - 1
+
+        do j = low, high - 1
+            if (trim(arr(j)%ptr%name) <= trim(pivot%name)) then
+                i = i + 1
+                ! Swap arr(i) and arr(j)
+                temp = arr(i)
+                arr(i) = arr(j)
+                arr(j) = temp
+            end if
+        end do
+
+        ! Swap arr(i+1) and arr(high)
+        temp = arr(i + 1)
+        arr(i + 1) = arr(high)
+        arr(high) = temp
+
+        pivot_idx = i + 1
+    end subroutine partition_nodes
 
     function should_insert_before(a, b) result(before)
         type(tree_node), pointer, intent(in) :: a, b

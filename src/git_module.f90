@@ -5,6 +5,82 @@ module git_module
 
 contains
 
+    ! ========== Performance Optimization: Binary Search Functions ==========
+
+    recursive subroutine quicksort_files(arr, low, high)
+        type(file_entry), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer :: pivot_idx
+
+        if (low < high) then
+            call partition_files(arr, low, high, pivot_idx)
+            call quicksort_files(arr, low, pivot_idx - 1)
+            call quicksort_files(arr, pivot_idx + 1, high)
+        end if
+    end subroutine quicksort_files
+
+    subroutine partition_files(arr, low, high, pivot_idx)
+        type(file_entry), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer, intent(out) :: pivot_idx
+        character(len=512) :: pivot_path
+        type(file_entry) :: temp
+        integer :: i, j
+
+        pivot_path = trim(arr(high)%path)
+        i = low - 1
+
+        do j = low, high - 1
+            if (trim(arr(j)%path) <= pivot_path) then
+                i = i + 1
+                ! Swap arr(i) and arr(j)
+                temp = arr(i)
+                arr(i) = arr(j)
+                arr(j) = temp
+            end if
+        end do
+
+        ! Swap arr(i+1) and arr(high)
+        temp = arr(i + 1)
+        arr(i + 1) = arr(high)
+        arr(high) = temp
+
+        pivot_idx = i + 1
+    end subroutine partition_files
+
+    function binary_search_file(arr, n, target_path) result(index)
+        type(file_entry), intent(in) :: arr(:)
+        integer, intent(in) :: n
+        character(len=*), intent(in) :: target_path
+        integer :: index
+        integer :: low, high, mid
+        character(len=512) :: target_trimmed, mid_path
+
+        index = -1  ! Not found
+        if (n == 0) return
+
+        target_trimmed = trim(target_path)
+        low = 1
+        high = n
+
+        do while (low <= high)
+            mid = low + (high - low) / 2
+            mid_path = trim(arr(mid)%path)
+
+            if (mid_path == target_trimmed) then
+                index = mid
+                return
+            else if (mid_path < target_trimmed) then
+                low = mid + 1
+            else
+                high = mid - 1
+            end if
+        end do
+    end function binary_search_file
+
+    ! ========== End Binary Search Functions ==========
+
+
     subroutine get_dirty_files(files, n_files)
         type(file_entry), allocatable, intent(out) :: files(:)
         integer, intent(out) :: n_files
@@ -77,7 +153,11 @@ contains
 
         ! Copy to output array
         allocate(files(n_files))
-        if (n_files > 0) files(1:n_files) = temp_files(1:n_files)
+        if (n_files > 0) then
+            files(1:n_files) = temp_files(1:n_files)
+            ! Sort for binary search optimization
+            call quicksort_files(files, 1, n_files)
+        end if
         deallocate(temp_files)
     end subroutine get_dirty_files
 
@@ -137,26 +217,23 @@ contains
                     call resize_array(temp_files, max_files)
                 end if
 
-                ! Check if file is dirty and get status
-                is_dirty_file = .false.
+                ! Check if file is dirty and get status using binary search (O(log n) vs O(n))
+                temp_files(n_files)%path = trim(line)
                 temp_files(n_files)%status = '  '  ! Initialize as clean
                 temp_files(n_files)%is_staged = .false.
                 temp_files(n_files)%is_unstaged = .false.
                 temp_files(n_files)%is_untracked = .false.
                 temp_files(n_files)%has_incoming = .false.
-                do i = 1, n_dirty
-                    if (trim(dirty_files(i)%path) == trim(line)) then
-                        is_dirty_file = .true.
-                        temp_files(n_files)%status = dirty_files(i)%status
-                        temp_files(n_files)%is_staged = dirty_files(i)%is_staged
-                        temp_files(n_files)%is_unstaged = dirty_files(i)%is_unstaged
-                        temp_files(n_files)%is_untracked = dirty_files(i)%is_untracked
-                        temp_files(n_files)%has_incoming = dirty_files(i)%has_incoming
-                        exit
-                    end if
-                end do
 
-                temp_files(n_files)%path = trim(line)
+                i = binary_search_file(dirty_files, n_dirty, line)
+                if (i > 0) then
+                    ! Found in dirty files - copy status
+                    temp_files(n_files)%status = dirty_files(i)%status
+                    temp_files(n_files)%is_staged = dirty_files(i)%is_staged
+                    temp_files(n_files)%is_unstaged = dirty_files(i)%is_unstaged
+                    temp_files(n_files)%is_untracked = dirty_files(i)%is_untracked
+                    temp_files(n_files)%has_incoming = dirty_files(i)%has_incoming
+                end if
             end if
         end do
 
@@ -587,9 +664,10 @@ contains
     subroutine mark_incoming_changes(files, n_files)
         type(file_entry), intent(inout) :: files(:)
         integer, intent(in) :: n_files
-        integer :: iostat, unit_num, status_code, i
+        integer :: iostat, unit_num, status_code, i, idx
         character(len=1024) :: line
-        character(len=512) :: incoming_path
+        character(len=512), allocatable :: incoming_paths(:)
+        integer :: n_incoming, max_incoming
 
         ! Check if there's an upstream branch configured
         ! Don't prompt - this is called automatically during refresh
@@ -611,24 +689,130 @@ contains
         open(newunit=unit_num, file='/tmp/fuss_incoming.txt', status='old', action='read', iostat=iostat)
         if (iostat /= 0) return
 
+        ! Build sorted array of incoming file paths for binary search
+        max_incoming = 100
+        allocate(incoming_paths(max_incoming))
+        n_incoming = 0
+
         do
             read(unit_num, '(A)', iostat=iostat) line
             if (iostat /= 0) exit
 
             if (len_trim(line) > 0) then
-                incoming_path = trim(line)
-                ! Mark this file as having incoming changes
-                do i = 1, n_files
-                    if (trim(files(i)%path) == trim(incoming_path)) then
-                        files(i)%has_incoming = .true.
-                        exit
-                    end if
-                end do
+                n_incoming = n_incoming + 1
+                if (n_incoming > max_incoming) then
+                    ! Resize array
+                    call resize_string_array(incoming_paths, max_incoming * 2)
+                    max_incoming = max_incoming * 2
+                end if
+                incoming_paths(n_incoming) = trim(line)
             end if
         end do
 
         close(unit_num, status='delete')
+
+        if (n_incoming == 0) then
+            deallocate(incoming_paths)
+            return
+        end if
+
+        ! Sort incoming paths for binary search
+        call quicksort_strings(incoming_paths, 1, n_incoming)
+
+        ! Use binary search to mark files with incoming changes (O(n log m) vs O(n×m))
+        do i = 1, n_files
+            idx = binary_search_string(incoming_paths, n_incoming, files(i)%path)
+            if (idx > 0) then
+                files(i)%has_incoming = .true.
+            end if
+        end do
+
+        deallocate(incoming_paths)
     end subroutine mark_incoming_changes
+
+    ! Helper subroutines for string array sorting and searching
+    subroutine resize_string_array(array, new_size)
+        character(len=512), allocatable, intent(inout) :: array(:)
+        integer, intent(in) :: new_size
+        character(len=512), allocatable :: temp(:)
+        integer :: old_size
+
+        old_size = size(array)
+        allocate(temp(old_size))
+        temp = array
+        deallocate(array)
+        allocate(array(new_size))
+        array(1:old_size) = temp
+        deallocate(temp)
+    end subroutine resize_string_array
+
+    recursive subroutine quicksort_strings(arr, low, high)
+        character(len=512), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer :: pivot_idx
+
+        if (low < high) then
+            call partition_strings(arr, low, high, pivot_idx)
+            call quicksort_strings(arr, low, pivot_idx - 1)
+            call quicksort_strings(arr, pivot_idx + 1, high)
+        end if
+    end subroutine quicksort_strings
+
+    subroutine partition_strings(arr, low, high, pivot_idx)
+        character(len=512), intent(inout) :: arr(:)
+        integer, intent(in) :: low, high
+        integer, intent(out) :: pivot_idx
+        character(len=512) :: pivot, temp
+        integer :: i, j
+
+        pivot = trim(arr(high))
+        i = low - 1
+
+        do j = low, high - 1
+            if (trim(arr(j)) <= pivot) then
+                i = i + 1
+                temp = arr(i)
+                arr(i) = arr(j)
+                arr(j) = temp
+            end if
+        end do
+
+        temp = arr(i + 1)
+        arr(i + 1) = arr(high)
+        arr(high) = temp
+
+        pivot_idx = i + 1
+    end subroutine partition_strings
+
+    function binary_search_string(arr, n, target) result(index)
+        character(len=512), intent(in) :: arr(:)
+        integer, intent(in) :: n
+        character(len=*), intent(in) :: target
+        integer :: index
+        integer :: low, high, mid
+        character(len=512) :: target_trimmed, mid_val
+
+        index = -1
+        if (n == 0) return
+
+        target_trimmed = trim(target)
+        low = 1
+        high = n
+
+        do while (low <= high)
+            mid = low + (high - low) / 2
+            mid_val = trim(arr(mid))
+
+            if (mid_val == target_trimmed) then
+                index = mid
+                return
+            else if (mid_val < target_trimmed) then
+                low = mid + 1
+            else
+                high = mid - 1
+            end if
+        end do
+    end function binary_search_string
 
     subroutine git_fetch()
         integer :: status
