@@ -30,6 +30,7 @@ module types_module
         logical :: is_untracked
         logical :: has_incoming
         logical :: is_file
+        integer :: depth  ! Nesting depth (0 = root level)
         type(tree_node), pointer :: node => null()  ! Pointer to corresponding tree node
     end type selectable_item
 

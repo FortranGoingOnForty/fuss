@@ -168,24 +168,14 @@ contains
 
             ! Handle input
             select case (key)
-            case ('j', 'B')  ! j or down arrow
-                if (selected < n_items) selected = selected + 1
-            case ('k', 'A')  ! k or up arrow
-                if (selected > 1) selected = selected - 1
-            case ('D')  ! Left arrow - collapse directory
-                if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
-                    items(selected)%node%is_expanded = .false.
-                    ! Rebuild item list to hide collapsed children (don't rebuild tree)
-                    call rebuild_item_list_from_tree(tree_root, items, n_items)
-                    if (selected > n_items) selected = n_items
-                end if
-            case ('C')  ! Right arrow - expand directory
-                if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
-                    items(selected)%node%is_expanded = .true.
-                    ! Rebuild item list to show newly expanded children (don't rebuild tree)
-                    call rebuild_item_list_from_tree(tree_root, items, n_items)
-                    if (selected > n_items) selected = n_items
-                end if
+            case ('j', 'B')  ! j or down arrow - navigate to next sibling (skip nested items)
+                call navigate_down(items, n_items, selected)
+            case ('k', 'A')  ! k or up arrow - navigate to previous sibling (skip nested items)
+                call navigate_up(items, n_items, selected)
+            case ('D')  ! Left arrow - exit directory or collapse
+                call navigate_left(items, n_items, selected, tree_root)
+            case ('C')  ! Right arrow - enter directory
+                call navigate_right(items, n_items, selected, tree_root)
             case ('a')  ! Stage file (lowercase to avoid conflict with arrow A)
                 if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call git_add_file(items(selected)%path)
@@ -353,7 +343,7 @@ contains
         n_items = 0
 
         ! Traverse tree and collect all items
-        call collect_items_from_tree(tree_root, '', temp_items, n_items, max_items)
+        call collect_items_from_tree(tree_root, '', 0, temp_items, n_items, max_items)
 
         ! Copy to output
         allocate(items(n_items))
@@ -376,7 +366,7 @@ contains
         n_items = 0
 
         ! Traverse tree and collect all items
-        call collect_items_from_tree(tree_root, '', temp_items, n_items, max_items)
+        call collect_items_from_tree(tree_root, '', 0, temp_items, n_items, max_items)
 
         ! Copy to output
         allocate(items(n_items))
@@ -534,9 +524,10 @@ contains
         end do
     end subroutine restore_collapsed_state
 
-    recursive subroutine collect_items_from_tree(node, parent_path, items, n_items, max_items)
+    recursive subroutine collect_items_from_tree(node, parent_path, depth, items, n_items, max_items)
         type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: parent_path
+        integer, intent(in) :: depth
         type(selectable_item), allocatable, intent(inout) :: items(:)
         integer, intent(inout) :: n_items, max_items
         type(tree_node), pointer :: child
@@ -563,6 +554,7 @@ contains
             items(n_items)%is_unstaged = node%is_unstaged
             items(n_items)%is_untracked = node%is_untracked
             items(n_items)%has_incoming = node%has_incoming
+            items(n_items)%depth = depth  ! Track nesting depth
             items(n_items)%node => node  ! Store pointer to tree node
         else
             full_path = ''
@@ -572,7 +564,7 @@ contains
         if (node%is_expanded) then
             child => node%first_child
             do while (associated(child))
-                call collect_items_from_tree(child, full_path, items, n_items, max_items)
+                call collect_items_from_tree(child, full_path, depth + 1, items, n_items, max_items)
                 child => child%next_sibling
             end do
         end if
@@ -593,6 +585,127 @@ contains
         items(1:old_size) = temp_items
         deallocate(temp_items)
     end subroutine resize_item_array
+
+    ! ========== Navigation Functions for New Navigation Model ==========
+
+    subroutine navigate_down(items, n_items, selected)
+        type(selectable_item), intent(in) :: items(:)
+        integer, intent(in) :: n_items
+        integer, intent(inout) :: selected
+        integer :: current_depth, i
+
+        if (n_items == 0) return
+
+        current_depth = items(selected)%depth
+
+        ! Search forward for next item at same depth
+        do i = selected + 1, n_items
+            if (items(i)%depth == current_depth) then
+                selected = i
+                return
+            end if
+        end do
+
+        ! No item found - wrap to beginning
+        do i = 1, selected - 1
+            if (items(i)%depth == current_depth) then
+                selected = i
+                return
+            end if
+        end do
+        ! If we get here, we're the only item at this depth, so stay put
+    end subroutine navigate_down
+
+    subroutine navigate_up(items, n_items, selected)
+        type(selectable_item), intent(in) :: items(:)
+        integer, intent(in) :: n_items
+        integer, intent(inout) :: selected
+        integer :: current_depth, i
+
+        if (n_items == 0) return
+
+        current_depth = items(selected)%depth
+
+        ! Search backward for previous item at same depth
+        do i = selected - 1, 1, -1
+            if (items(i)%depth == current_depth) then
+                selected = i
+                return
+            end if
+        end do
+
+        ! No item found - wrap to end
+        do i = n_items, selected + 1, -1
+            if (items(i)%depth == current_depth) then
+                selected = i
+                return
+            end if
+        end do
+        ! If we get here, we're the only item at this depth, so stay put
+    end subroutine navigate_up
+
+    subroutine navigate_right(items, n_items, selected, tree_root)
+        type(selectable_item), allocatable, intent(inout) :: items(:)
+        integer, intent(inout) :: n_items
+        integer, intent(inout) :: selected
+        type(tree_node), pointer, intent(in) :: tree_root
+        integer :: i, target_depth
+
+        if (n_items == 0) return
+        if (items(selected)%is_file) return  ! Can't enter a file
+
+        ! We're on a directory
+        if (.not. items(selected)%node%is_expanded) then
+            ! Directory is collapsed - expand it
+            items(selected)%node%is_expanded = .true.
+            ! Rebuild item list
+            call rebuild_item_list_from_tree(tree_root, items, n_items)
+            ! Adjust selection if needed
+            if (selected > n_items .and. n_items > 0) selected = n_items
+        end if
+
+        ! Now move to first child (next item with depth+1)
+        target_depth = items(selected)%depth + 1
+        do i = selected + 1, n_items
+            if (items(i)%depth == target_depth) then
+                selected = i
+                return
+            end if
+        end do
+        ! No children - stay on directory
+    end subroutine navigate_right
+
+    subroutine navigate_left(items, n_items, selected, tree_root)
+        type(selectable_item), allocatable, intent(inout) :: items(:)
+        integer, intent(inout) :: n_items
+        integer, intent(inout) :: selected
+        type(tree_node), pointer, intent(in) :: tree_root
+        integer :: i, target_depth
+
+        if (n_items == 0) return
+
+        ! If we're on an expanded directory, collapse it
+        if (.not. items(selected)%is_file .and. items(selected)%node%is_expanded) then
+            items(selected)%node%is_expanded = .false.
+            ! Rebuild item list
+            call rebuild_item_list_from_tree(tree_root, items, n_items)
+            ! Adjust selection if needed
+            if (selected > n_items .and. n_items > 0) selected = n_items
+            return
+        end if
+
+        ! Otherwise, move to parent (previous item with depth-1)
+        target_depth = items(selected)%depth - 1
+        if (target_depth < 0) return  ! Already at root level
+
+        ! Search backward for parent
+        do i = selected - 1, 1, -1
+            if (items(i)%depth == target_depth) then
+                selected = i
+                return
+            end if
+        end do
+    end subroutine navigate_left
 
     subroutine commit_prompt()
         character(len=512) :: commit_msg
