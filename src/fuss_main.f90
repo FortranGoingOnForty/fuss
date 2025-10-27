@@ -176,8 +176,22 @@ contains
                 call navigate_left(items, n_items, selected, tree_root)
             case ('C')  ! Right arrow - enter directory
                 call navigate_right(items, n_items, selected, tree_root)
-            case ('a')  ! Stage file (lowercase to avoid conflict with arrow A)
-                if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
+            case ('a')  ! Stage file or directory (lowercase to avoid conflict with arrow A)
+                ! Check if it's a directory - stage all files in it
+                if (.not. items(selected)%is_file) then
+                    call git_stage_directory(items(selected)%path)
+                    ! Refresh files after staging directory
+                    if (show_all) then
+                        call get_all_files(files, n_files)
+                    else
+                        call get_dirty_files(files, n_files)
+                    end if
+                    call mark_incoming_changes(files, n_files)
+                    call build_item_list(files, n_files, items, n_items, tree_root)
+                    if (selected > n_items .and. n_items > 0) selected = n_items
+                    if (n_items == 0) running = .false.
+                ! Otherwise it's a file - stage individual file
+                else if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call git_add_file(items(selected)%path)
                     ! Refresh files after git add
                     if (show_all) then

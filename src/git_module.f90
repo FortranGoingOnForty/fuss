@@ -431,6 +431,27 @@ contains
         call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_unstage_file
 
+    subroutine git_stage_directory(dirpath)
+        character(len=*), intent(in) :: dirpath
+        character(len=1024) :: command
+        integer :: status
+
+        ! Stage all files in directory using git add
+        write(command, '(A,A,A)') 'git add "', trim(dirpath), '/"'
+        print '(A)', 'Staging directory: ' // trim(dirpath) // '/'
+        call execute_command_line(trim(command), exitstat=status)
+
+        ! Show feedback
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ Staged all files in: ' // trim(dirpath) // '/' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Failed to stage directory: ' // trim(dirpath) // '/' // achar(27) // '[0m'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 0.5', exitstat=status)
+    end subroutine git_stage_directory
+
     subroutine git_stage_all()
         integer :: status
 
