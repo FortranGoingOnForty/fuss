@@ -604,6 +604,26 @@ contains
         print '(A)', 'Press any key to continue...'
     end subroutine git_commit_with_message
 
+    subroutine git_amend_commit(success)
+        logical, intent(out) :: success
+        integer :: status
+
+        ! Amend the last commit with currently staged changes (no message edit)
+        print '(A)', 'Amending last commit...'
+        call execute_command_line('git commit --amend --no-edit', exitstat=status)
+
+        success = (status == 0)
+
+        ! Show feedback
+        if (success) then
+            print '(A)', achar(27) // '[32m✓ Commit amended successfully!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Amend failed (nothing staged or no previous commit?)' // achar(27) // '[0m'
+        end if
+
+        print '(A)', 'Press any key to continue...'
+    end subroutine git_amend_commit
+
     subroutine get_git_status_output(status_lines, n_lines, max_lines)
         character(len=512), allocatable, intent(out) :: status_lines(:)
         integer, intent(out) :: n_lines
@@ -1176,6 +1196,31 @@ contains
         ! Re-enable cbreak mode
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine git_diff_file
+
+    subroutine view_file(filepath)
+        character(len=*), intent(in) :: filepath
+        character(len=2048) :: command
+        integer :: status
+
+        ! Restore terminal temporarily for pager
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Try bat first (with syntax highlighting and paging)
+        call execute_command_line('command -v bat > /dev/null 2>&1', exitstat=status)
+
+        if (status == 0) then
+            ! bat is available - use it with paging enabled
+            write(command, '(A,A,A)') 'bat --paging=always --style=numbers,grid "', trim(filepath), '"'
+            call execute_command_line(trim(command), exitstat=status)
+        else
+            ! Fall back to less with color support
+            write(command, '(A,A,A)') 'less -R "', trim(filepath), '"'
+            call execute_command_line(trim(command), exitstat=status)
+        end if
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine view_file
 
     subroutine git_tag(tag_name, tag_message, success)
         character(len=*), intent(in) :: tag_name

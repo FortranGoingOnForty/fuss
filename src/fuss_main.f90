@@ -251,6 +251,17 @@ contains
                 call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items, tree_root)
                 if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('M')  ! Amend last commit (Shift+M to avoid conflict with 'A' = up arrow)
+                call amend_prompt()
+                ! Refresh files after amend
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
             case ('s')  ! Show git status (lowercase)
                 call show_status_view()
             case ('p')  ! Push (lowercase)
@@ -313,6 +324,10 @@ contains
             case ('d')  ! Git diff with less
                 if (items(selected)%is_file) then
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
+                end if
+            case ('v')  ! View file (cat with bat/less pager)
+                if (items(selected)%is_file) then
+                    call view_file(items(selected)%path)
                 end if
             case ('r')  ! Remove/delete file
                 if (items(selected)%is_file) then
@@ -834,6 +849,24 @@ contains
             call read_key(key)
         end if
     end subroutine commit_prompt
+
+    subroutine amend_prompt()
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for amend prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mGit Amend Commit' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'This will add currently staged changes to the last commit.'
+        print '(A)', ''
+
+        ! Execute amend
+        call git_amend_commit(success)
+
+        ! Wait for keypress to continue
+        call read_key(key)
+    end subroutine amend_prompt
 
     subroutine show_status_view()
         ! Use less for scrollable, searchable git status view
