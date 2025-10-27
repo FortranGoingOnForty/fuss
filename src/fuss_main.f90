@@ -362,7 +362,7 @@ contains
         tree_root%next_sibling => null()
 
         do i = 1, n_files
-            call add_to_tree(tree_root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
+            call add_to_tree(tree_root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming, files(i)%is_gitignored)
         end do
 
         call sort_tree(tree_root)
@@ -591,6 +591,7 @@ contains
             items(n_items)%is_unstaged = node%is_unstaged
             items(n_items)%is_untracked = node%is_untracked
             items(n_items)%has_incoming = node%has_incoming
+            items(n_items)%is_gitignored = node%is_gitignored
             items(n_items)%depth = depth  ! Track nesting depth
             items(n_items)%node => node  ! Store pointer to tree node
         else

@@ -9,10 +9,10 @@ module tree_module
 
 contains
 
-    recursive subroutine add_to_tree(node, path, is_staged, is_unstaged, is_untracked, has_incoming)
+    recursive subroutine add_to_tree(node, path, is_staged, is_unstaged, is_untracked, has_incoming, is_gitignored)
         type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: path
-        logical, intent(in) :: is_staged, is_unstaged, is_untracked, has_incoming
+        logical, intent(in) :: is_staged, is_unstaged, is_untracked, has_incoming, is_gitignored
 
         integer :: slash_pos, iostat
         character(len=512) :: first_part, rest
@@ -33,6 +33,7 @@ contains
                     child%is_unstaged = child%is_unstaged .or. is_unstaged
                     child%is_untracked = child%is_untracked .or. is_untracked
                     child%has_incoming = child%has_incoming .or. has_incoming
+                    child%is_gitignored = child%is_gitignored .or. is_gitignored
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -58,6 +59,7 @@ contains
             new_child%is_unstaged = is_unstaged
             new_child%is_untracked = is_untracked
             new_child%has_incoming = has_incoming
+            new_child%is_gitignored = is_gitignored
             new_child%is_expanded = .true.  ! Directories expanded by default
             new_child%first_child => null()
             new_child%next_sibling => null()
@@ -76,7 +78,7 @@ contains
             child => node%first_child
             do while (associated(child))
                 if (trim(child%name) == trim(first_part)) then
-                    call add_to_tree(child, rest, is_staged, is_unstaged, is_untracked, has_incoming)
+                    call add_to_tree(child, rest, is_staged, is_unstaged, is_untracked, has_incoming, is_gitignored)
                     return
                 end if
                 if (.not. associated(child%next_sibling)) exit
@@ -91,6 +93,7 @@ contains
             new_child%is_unstaged = .false.
             new_child%is_untracked = .false.
             new_child%has_incoming = .false.
+            new_child%is_gitignored = .false.
             new_child%is_expanded = .true.  ! Directories expanded by default
             new_child%first_child => null()
             new_child%next_sibling => null()
@@ -101,7 +104,7 @@ contains
                 child%next_sibling => new_child
             end if
 
-            call add_to_tree(new_child, rest, is_staged, is_unstaged, is_untracked, has_incoming)
+            call add_to_tree(new_child, rest, is_staged, is_unstaged, is_untracked, has_incoming, is_gitignored)
         end if
     end subroutine add_to_tree
 

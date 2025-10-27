@@ -9,6 +9,7 @@ module types_module
         logical :: is_unstaged
         logical :: is_untracked
         logical :: has_incoming
+        logical :: is_gitignored
         logical :: is_expanded  ! True if directory is expanded, always true for files
         type(tree_node), pointer :: first_child => null()
         type(tree_node), pointer :: next_sibling => null()
@@ -21,6 +22,7 @@ module types_module
         logical :: is_unstaged
         logical :: is_untracked
         logical :: has_incoming
+        logical :: is_gitignored
     end type file_entry
 
     type :: selectable_item
@@ -29,6 +31,7 @@ module types_module
         logical :: is_unstaged
         logical :: is_untracked
         logical :: has_incoming
+        logical :: is_gitignored
         logical :: is_file
         integer :: depth  ! Nesting depth (0 = root level)
         type(tree_node), pointer :: node => null()  ! Pointer to corresponding tree node

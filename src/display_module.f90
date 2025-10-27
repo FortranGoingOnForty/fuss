@@ -27,7 +27,7 @@ contains
 
         ! Build tree
         do i = 1, n_files
-            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming)
+            call add_to_tree(root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming, files(i)%is_gitignored)
         end do
 
         ! Sort tree
@@ -79,11 +79,18 @@ contains
         if (.not. is_root) then
             ! Build line
             if (is_last) then
-                line = prefix // branch_last // ' ' // trim(node%name)
+                line = prefix // branch_last // ' '
             else
-                line = prefix // branch_mid // ' ' // trim(node%name)
+                line = prefix // branch_mid // ' '
             end if
-            
+
+            ! Add name with grey color if gitignored
+            if (node%is_gitignored) then
+                line = trim(line) // ESC // '[90m' // trim(node%name) // ESC // '[0m'
+            else
+                line = trim(line) // trim(node%name)
+            end if
+
             ! Show all applicable indicators
             if (node%is_staged) then
                 line = trim(line) // trim(mark_staged)
@@ -229,7 +236,11 @@ contains
 
                 ! Add name with highlighting if selected
                 if (is_selected) then
-                    line = trim(line) // highlight_on // trim(node%name)
+                    if (node%is_gitignored) then
+                        line = trim(line) // highlight_on // ESC // '[90m' // trim(node%name) // ESC // '[0m'
+                    else
+                        line = trim(line) // highlight_on // trim(node%name)
+                    end if
                     if (node%is_staged) then
                         line = trim(line) // trim(mark_staged)
                     end if
@@ -244,7 +255,11 @@ contains
                     end if
                     line = trim(line) // highlight_off
                 else
-                    line = trim(line) // trim(node%name)
+                    if (node%is_gitignored) then
+                        line = trim(line) // ESC // '[90m' // trim(node%name) // ESC // '[0m'
+                    else
+                        line = trim(line) // trim(node%name)
+                    end if
                     if (node%is_staged) then
                         line = trim(line) // trim(mark_staged)
                     end if

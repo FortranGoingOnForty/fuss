@@ -80,6 +80,79 @@ contains
 
     ! ========== End Binary Search Functions ==========
 
+    ! ========== Gitignore Detection ==========
+
+    subroutine mark_gitignored_files(files, n_files)
+        type(file_entry), intent(inout) :: files(:)
+        integer, intent(in) :: n_files
+        integer :: iostat, unit_num_in, unit_num_out, status_code, i, idx
+        character(len=512), allocatable :: ignored_paths(:)
+        integer :: n_ignored, max_ignored
+        character(len=1024) :: line
+
+        if (n_files == 0) return
+
+        ! Write all file paths to a temp file for batch checking
+        open(newunit=unit_num_in, file='/tmp/fuss_check_ignore_in.txt', status='replace', action='write', iostat=iostat)
+        if (iostat /= 0) return
+
+        do i = 1, n_files
+            write(unit_num_in, '(A)') trim(files(i)%path)
+        end do
+        close(unit_num_in)
+
+        ! Use git check-ignore --stdin to check all files at once
+        call execute_command_line('git check-ignore --stdin < /tmp/fuss_check_ignore_in.txt > /tmp/fuss_check_ignore_out.txt 2>/dev/null', &
+                                  exitstat=status_code)
+
+        ! Read the output (files that ARE gitignored)
+        open(newunit=unit_num_out, file='/tmp/fuss_check_ignore_out.txt', status='old', action='read', iostat=iostat)
+        if (iostat /= 0) then
+            ! Clean up and return - no files are gitignored
+            call execute_command_line('rm -f /tmp/fuss_check_ignore_in.txt /tmp/fuss_check_ignore_out.txt', exitstat=status_code)
+            return
+        end if
+
+        ! Build sorted array of gitignored paths for binary search
+        max_ignored = 100
+        allocate(ignored_paths(max_ignored))
+        n_ignored = 0
+
+        do
+            read(unit_num_out, '(A)', iostat=iostat) line
+            if (iostat /= 0) exit
+
+            if (len_trim(line) > 0) then
+                n_ignored = n_ignored + 1
+                if (n_ignored > max_ignored) then
+                    call resize_string_array(ignored_paths, max_ignored * 2)
+                    max_ignored = max_ignored * 2
+                end if
+                ignored_paths(n_ignored) = trim(line)
+            end if
+        end do
+
+        close(unit_num_out)
+
+        if (n_ignored > 0) then
+            ! Sort for binary search
+            call quicksort_strings(ignored_paths, 1, n_ignored)
+
+            ! Mark gitignored files using binary search
+            do i = 1, n_files
+                idx = binary_search_string(ignored_paths, n_ignored, files(i)%path)
+                files(i)%is_gitignored = (idx > 0)
+            end do
+
+            deallocate(ignored_paths)
+        end if
+
+        ! Clean up temp files
+        call execute_command_line('rm -f /tmp/fuss_check_ignore_in.txt /tmp/fuss_check_ignore_out.txt', exitstat=status_code)
+    end subroutine mark_gitignored_files
+
+    ! ========== End Gitignore Detection ==========
+
 
     subroutine get_dirty_files(files, n_files)
         type(file_entry), allocatable, intent(out) :: files(:)
@@ -146,6 +219,7 @@ contains
                 temp_files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
                 temp_files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. temp_files(n_files)%is_untracked)
                 temp_files(n_files)%has_incoming = .false.
+                temp_files(n_files)%is_gitignored = .false.
             end if
         end do
 
@@ -155,6 +229,8 @@ contains
         allocate(files(n_files))
         if (n_files > 0) then
             files(1:n_files) = temp_files(1:n_files)
+            ! Mark gitignored files
+            call mark_gitignored_files(files, n_files)
             ! Sort for binary search optimization
             call quicksort_files(files, 1, n_files)
         end if
@@ -224,6 +300,7 @@ contains
                 temp_files(n_files)%is_unstaged = .false.
                 temp_files(n_files)%is_untracked = .false.
                 temp_files(n_files)%has_incoming = .false.
+                temp_files(n_files)%is_gitignored = .false.
 
                 i = binary_search_file(dirty_files, n_dirty, line)
                 if (i > 0) then
@@ -233,6 +310,7 @@ contains
                     temp_files(n_files)%is_unstaged = dirty_files(i)%is_unstaged
                     temp_files(n_files)%is_untracked = dirty_files(i)%is_untracked
                     temp_files(n_files)%has_incoming = dirty_files(i)%has_incoming
+                    temp_files(n_files)%is_gitignored = dirty_files(i)%is_gitignored
                 end if
             end if
         end do
@@ -240,7 +318,11 @@ contains
         close(unit_num, status='delete')
 
         allocate(files(n_files))
-        if (n_files > 0) files(1:n_files) = temp_files(1:n_files)
+        if (n_files > 0) then
+            files(1:n_files) = temp_files(1:n_files)
+            ! Mark gitignored files (this will update the is_gitignored field)
+            call mark_gitignored_files(files, n_files)
+        end if
         deallocate(temp_files)
         if (allocated(dirty_files)) deallocate(dirty_files)
     end subroutine get_all_files
@@ -304,6 +386,7 @@ contains
                 files(n_files)%is_staged = (git_status(1:1) /= ' ' .and. git_status(1:1) /= '?')
                 files(n_files)%is_unstaged = (git_status(2:2) /= ' ' .and. .not. files(n_files)%is_untracked)
                 files(n_files)%has_incoming = .false.
+                files(n_files)%is_gitignored = .false.
             end if
         end do
 
@@ -741,6 +824,7 @@ contains
                     temp_files(n_files)%is_unstaged = .false.
                     temp_files(n_files)%is_untracked = .false.
                     temp_files(n_files)%has_incoming = .true.
+                    temp_files(n_files)%is_gitignored = .false.
                 end if
             end if
         end do
