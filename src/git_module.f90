@@ -348,6 +348,42 @@ contains
         call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_unstage_file
 
+    subroutine git_stage_all()
+        integer :: status
+
+        ! Stage all changes (modified, deleted, and untracked files)
+        print '(A)', 'Staging all changes...'
+        call execute_command_line('git add --all', exitstat=status)
+
+        ! Show feedback
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ All changes staged!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Failed to stage all changes' // achar(27) // '[0m'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 0.5', exitstat=status)
+    end subroutine git_stage_all
+
+    subroutine git_unstage_all()
+        integer :: status
+
+        ! Unstage all staged files
+        print '(A)', 'Unstaging all files...'
+        call execute_command_line('git restore --staged .', exitstat=status)
+
+        ! Show feedback
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ All files unstaged!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Failed to unstage files' // achar(27) // '[0m'
+        end if
+
+        ! Brief pause to show message
+        call execute_command_line('sleep 0.5', exitstat=status)
+    end subroutine git_unstage_all
+
     subroutine git_delete_file(filepath, is_untracked, deleted)
         use terminal_module, only: read_key
         character(len=*), intent(in) :: filepath

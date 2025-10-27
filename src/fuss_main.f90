@@ -203,6 +203,29 @@ contains
                     call build_item_list(files, n_files, items, n_items, tree_root)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                 end if
+            case ('S')  ! Stage all (Shift+S to avoid conflict with up arrow 'A')
+                call git_stage_all()
+                ! Refresh files after staging all
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+                if (n_items == 0) running = .false.
+            case ('U')  ! Unstage all (Shift+U)
+                call git_unstage_all()
+                ! Refresh files after unstaging all
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
             case ('m')  ! Commit (lowercase)
                 call commit_prompt()
                 ! Refresh files after commit
