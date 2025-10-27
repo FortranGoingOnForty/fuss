@@ -472,7 +472,18 @@ contains
         call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status)
 
         if (status /= 0) then
-            ! No upstream - get current branch name and set upstream
+            ! No upstream - check if origin remote exists
+            call execute_command_line('git remote get-url origin > /dev/null 2>&1', exitstat=status)
+
+            if (status /= 0) then
+                ! No origin remote - offer to select upstream manually
+                print '(A)', ''
+                print '(A)', 'No upstream configured and no origin remote found.'
+                call prompt_upstream_selection(success)
+                return
+            end if
+
+            ! Origin exists - get current branch name and push to origin
             call execute_command_line('git rev-parse --abbrev-ref HEAD > /tmp/fuss_current_branch.txt 2>&1', &
                                       exitstat=status)
 
@@ -499,7 +510,7 @@ contains
                 return
             end if
 
-            ! Push with upstream configuration
+            ! Push with upstream configuration to origin
             print '(A)', 'No upstream configured. Pushing to origin/' // trim(current_branch) // '...'
             write(command, '(A,A,A)') 'git push -u origin "', trim(current_branch), '" 2>&1'
             call execute_command_line(trim(command), exitstat=status)
@@ -508,7 +519,9 @@ contains
                 print '(A)', achar(27) // '[32m✓ Pushed and set upstream to origin/' // trim(current_branch) // achar(27) // '[0m'
                 success = .true.
             else
-                print '(A)', achar(27) // '[31m✗ Push failed (check permissions/remote)' // achar(27) // '[0m'
+                print '(A)', achar(27) // '[31m✗ Push failed - select upstream manually...' // achar(27) // '[0m'
+                print '(A)', ''
+                call prompt_upstream_selection(success)
             end if
         else
             ! Upstream exists - do regular push
