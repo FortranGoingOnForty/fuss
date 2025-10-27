@@ -462,18 +462,65 @@ contains
 
     subroutine git_push(success)
         logical, intent(out) :: success
-        integer :: status
+        integer :: status, iostat, unit_num
+        character(len=512) :: current_branch
+        character(len=1024) :: command
 
-        ! Execute git push
-        call execute_command_line('git push 2>&1', exitstat=status)
+        success = .false.
 
-        success = (status == 0)
+        ! Check if current branch has an upstream configured
+        call execute_command_line('git rev-parse --abbrev-ref @{upstream} > /dev/null 2>&1', exitstat=status)
 
-        ! Show feedback
-        if (success) then
-            print '(A)', achar(27) // '[32m✓ Pushed successfully!' // achar(27) // '[0m'
+        if (status /= 0) then
+            ! No upstream - get current branch name and set upstream
+            call execute_command_line('git rev-parse --abbrev-ref HEAD > /tmp/fuss_current_branch.txt 2>&1', &
+                                      exitstat=status)
+
+            if (status /= 0) then
+                print '(A)', achar(27) // '[31m✗ Could not determine current branch' // achar(27) // '[0m'
+                print '(A)', 'Press any key to continue...'
+                return
+            end if
+
+            ! Read current branch name
+            open(newunit=unit_num, file='/tmp/fuss_current_branch.txt', status='old', action='read', iostat=iostat)
+            if (iostat /= 0) then
+                print '(A)', achar(27) // '[31m✗ Could not read branch name' // achar(27) // '[0m'
+                print '(A)', 'Press any key to continue...'
+                return
+            end if
+
+            read(unit_num, '(A)', iostat=iostat) current_branch
+            close(unit_num, status='delete')
+
+            if (iostat /= 0 .or. len_trim(current_branch) == 0) then
+                print '(A)', achar(27) // '[31m✗ Invalid branch name' // achar(27) // '[0m'
+                print '(A)', 'Press any key to continue...'
+                return
+            end if
+
+            ! Push with upstream configuration
+            print '(A)', 'No upstream configured. Pushing to origin/' // trim(current_branch) // '...'
+            write(command, '(A,A,A)') 'git push -u origin "', trim(current_branch), '" 2>&1'
+            call execute_command_line(trim(command), exitstat=status)
+
+            if (status == 0) then
+                print '(A)', achar(27) // '[32m✓ Pushed and set upstream to origin/' // trim(current_branch) // achar(27) // '[0m'
+                success = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Push failed (check permissions/remote)' // achar(27) // '[0m'
+            end if
         else
-            print '(A)', achar(27) // '[31m✗ Push failed (check remote/branch)' // achar(27) // '[0m'
+            ! Upstream exists - do regular push
+            print '(A)', 'Pushing to upstream...'
+            call execute_command_line('git push 2>&1', exitstat=status)
+
+            if (status == 0) then
+                print '(A)', achar(27) // '[32m✓ Pushed successfully!' // achar(27) // '[0m'
+                success = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Push failed (check remote/branch)' // achar(27) // '[0m'
+            end if
         end if
 
         print '(A)', 'Press any key to continue...'
@@ -952,5 +999,54 @@ contains
 
         call execute_command_line('sleep 1', exitstat=status)
     end subroutine git_tag
+
+    subroutine git_switch_branch(success)
+        logical, intent(out) :: success
+        integer :: status_code
+        character(len=512) :: selected_branch
+        character(len=1024) :: command
+
+        success = .false.
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status_code)
+
+        ! Use fzf to select branch (local and remote)
+        ! Show local branches and remote branches, remove leading spaces and origin/ prefix for display
+        call execute_command_line('(git branch --all | grep -v HEAD | sed "s/^[* ] //" | sed "s/remotes\\/origin\\///" | sort -u) | ' // &
+                                  'fzf --height=15 --prompt="Switch to branch: " --preview="git log --oneline --graph --color=always {}" ' // &
+                                  '--preview-window=right:50% > /tmp/fuss_branch_select.txt', &
+                                  exitstat=status_code)
+
+        ! Re-enable cbreak mode first
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status_code)
+
+        if (status_code /= 0) then
+            ! User cancelled
+            return
+        end if
+
+        ! Read selected branch
+        open(unit=99, file='/tmp/fuss_branch_select.txt', status='old', action='read', iostat=status_code)
+        if (status_code /= 0) return
+
+        read(99, '(A)', iostat=status_code) selected_branch
+        close(99, status='delete')
+
+        if (status_code /= 0 .or. len_trim(selected_branch) == 0) return
+
+        ! Switch to the branch
+        write(command, '(A,A,A)') 'git switch "', trim(selected_branch), '" 2>&1'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        if (status_code == 0) then
+            print '(A)', achar(27) // '[32m✓ Switched to branch: ' // trim(selected_branch) // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Failed to switch branch' // achar(27) // '[0m'
+        end if
+
+        call execute_command_line('sleep 1', exitstat=status_code)
+    end subroutine git_switch_branch
 
 end module git_module

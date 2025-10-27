@@ -157,7 +157,7 @@ contains
                      achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                      achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
                      achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
-        print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:collapse/expand | a:stage | u:unstage | f:fetch | d:diff | r:delete | l:pull | m:commit | p:push | t:tag | s:status | q:quit'
+        print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:collapse/expand | a:stage | u:unstage | b:branch | f:fetch | d:diff | r:delete | l:pull | m:commit | p:push | t:tag | s:status | q:quit'
 
         ! Don't free tree - it's owned by interactive_mode
     end subroutine draw_interactive_tree

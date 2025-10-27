@@ -229,6 +229,20 @@ contains
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('t')  ! Tag (lowercase)
                 call tag_prompt()
+            case ('b')  ! Switch branch
+                call branch_switch_prompt()
+                ! Refresh files after branch switch
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+                if (n_items == 0) running = .false.
+                ! Update branch name display
+                call get_repo_info(repo_name, branch_name)
             case ('f')  ! Git fetch
                 call git_fetch()
                 ! Refresh files after fetch and include files with incoming changes
@@ -776,6 +790,18 @@ contains
             call read_key(key)
         end if
     end subroutine tag_prompt
+
+    subroutine branch_switch_prompt()
+        logical :: success
+
+        ! Clear screen for branch switch
+        call clear_screen()
+        print '(A)', achar(27) // '[1mSwitch Branch' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Call git branch switch with fzf
+        call git_switch_branch(success)
+    end subroutine branch_switch_prompt
 
     subroutine delete_prompt(filepath, is_untracked)
         character(len=*), intent(in) :: filepath
