@@ -467,6 +467,58 @@ contains
         call execute_command_line('sleep 0.5', exitstat=status)
     end subroutine git_unstage_all
 
+    subroutine git_discard_changes(filepath, is_staged, is_untracked, discarded)
+        use terminal_module, only: read_key
+        character(len=*), intent(in) :: filepath
+        logical, intent(in) :: is_staged, is_untracked
+        logical, intent(out) :: discarded
+        character(len=1024) :: command
+        character(len=1) :: key
+        integer :: status
+
+        discarded = .false.
+
+        ! Prompt for confirmation with different message based on file type
+        if (is_untracked) then
+            print '(A)', 'Discard (delete) untracked file ' // trim(filepath) // '?'
+        else if (is_staged) then
+            print '(A)', 'Discard changes and unstage ' // trim(filepath) // '?'
+        else
+            print '(A)', 'Discard changes to ' // trim(filepath) // '?'
+        end if
+        print '(A)', 'Press ''y'' to confirm, any other key to cancel.'
+
+        ! Read single key
+        call read_key(key)
+
+        ! Check if user confirmed
+        if (key == 'y' .or. key == 'Y') then
+            if (is_untracked) then
+                ! For untracked files, just delete them
+                write(command, '(A,A,A)') 'rm -f "', trim(filepath), '" 2>&1'
+                call execute_command_line(trim(command), exitstat=status)
+            else
+                ! For tracked files, restore from HEAD (works for both staged and unstaged)
+                ! git restore will unstage if needed and revert changes
+                write(command, '(A,A,A)') 'git restore --source=HEAD --staged --worktree "', trim(filepath), '" 2>&1'
+                call execute_command_line(trim(command), exitstat=status)
+            end if
+
+            if (status == 0) then
+                print '(A)', achar(27) // '[32m✓ Discarded changes: ' // trim(filepath) // achar(27) // '[0m'
+                discarded = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Failed to discard: ' // trim(filepath) // achar(27) // '[0m'
+            end if
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+        else
+            print '(A)', 'Discard cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+        end if
+    end subroutine git_discard_changes
+
     subroutine git_delete_file(filepath, is_untracked, deleted)
         use terminal_module, only: read_key
         character(len=*), intent(in) :: filepath

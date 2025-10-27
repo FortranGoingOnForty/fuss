@@ -297,6 +297,20 @@ contains
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
+            case ('x', 'X')  ! Discard changes
+                if (items(selected)%is_file .and. (items(selected)%is_staged .or. items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
+                    call discard_prompt(items(selected)%path, items(selected)%is_staged, items(selected)%is_untracked)
+                    ! Refresh files after discard
+                    if (show_all) then
+                        call get_all_files(files, n_files)
+                    else
+                        call get_dirty_files(files, n_files)
+                    end if
+                    call mark_incoming_changes(files, n_files)
+                    call build_item_list(files, n_files, items, n_items, tree_root)
+                    if (selected > n_items .and. n_items > 0) selected = n_items
+                    if (n_items == 0) running = .false.
+                end if
             case ('l')  ! Git pull
                 call git_pull()
                 ! Refresh files after pull (incoming indicators will automatically clear)
@@ -862,5 +876,23 @@ contains
         ! Wait for keypress to continue
         call read_key(key)
     end subroutine delete_prompt
+
+    subroutine discard_prompt(filepath, is_staged, is_untracked)
+        character(len=*), intent(in) :: filepath
+        logical, intent(in) :: is_staged, is_untracked
+        logical :: discarded
+        character(len=1) :: key
+
+        ! Clear screen for discard prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mDiscard Changes' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Execute discard with confirmation
+        call git_discard_changes(filepath, is_staged, is_untracked, discarded)
+
+        ! Wait for keypress to continue
+        call read_key(key)
+    end subroutine discard_prompt
 
 end program fuss
