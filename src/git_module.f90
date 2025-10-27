@@ -1009,8 +1009,6 @@ contains
         else
             print '(A)', achar(27) // '[31m✗ Failed to create tag' // achar(27) // '[0m'
         end if
-
-        call execute_command_line('sleep 1', exitstat=status)
     end subroutine git_tag
 
     subroutine git_switch_branch(success)
@@ -1061,5 +1059,26 @@ contains
 
         call execute_command_line('sleep 1', exitstat=status_code)
     end subroutine git_switch_branch
+
+    subroutine git_push_tag(tag_name, success)
+        character(len=*), intent(in) :: tag_name
+        logical, intent(out) :: success
+        character(len=1024) :: command
+        integer :: status
+
+        success = .false.
+
+        ! Push specific tag to origin
+        print '(A)', 'Pushing tag to origin...'
+        write(command, '(A,A,A)') 'git push origin "', trim(tag_name), '" 2>&1'
+        call execute_command_line(trim(command), exitstat=status)
+
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ Tag pushed to origin: ' // trim(tag_name) // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Failed to push tag' // achar(27) // '[0m'
+        end if
+    end subroutine git_push_tag
 
 end module git_module

@@ -768,12 +768,18 @@ contains
 
     subroutine tag_prompt()
         character(len=512) :: tag_name, tag_message
-        logical :: success
+        logical :: success, push_tag
         character(len=1) :: key
+        integer :: status
 
         ! Clear screen for tag prompt
         call clear_screen()
         print '(A)', achar(27) // '[1mGit Tag' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Show existing tags in compact format
+        print '(A)', achar(27) // '[2mExisting tags:' // achar(27) // '[0m'
+        call execute_command_line('git tag --sort=-version:refname | head -10 | column -c 80 2>/dev/null || git tag --sort=-version:refname | head -10', exitstat=status)
         print '(A)', ''
 
         ! Read tag name
@@ -786,7 +792,19 @@ contains
 
             call git_tag(tag_name, tag_message, success)
 
+            if (success) then
+                ! Ask if user wants to push the tag
+                print '(A)', ''
+                print '(A)', 'Push tag to origin? (y/n)'
+                call read_key(key)
+
+                if (key == 'y' .or. key == 'Y') then
+                    call git_push_tag(tag_name, push_tag)
+                end if
+            end if
+
             ! Wait for keypress to continue
+            print '(A)', 'Press any key to continue...'
             call read_key(key)
         end if
     end subroutine tag_prompt
