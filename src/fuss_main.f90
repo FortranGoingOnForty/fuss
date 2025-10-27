@@ -266,6 +266,23 @@ contains
                 if (n_items == 0) running = .false.
                 ! Update branch name display
                 call get_repo_info(repo_name, branch_name)
+            case ('n')  ! Create new branch
+                call branch_create_prompt()
+                ! Refresh files after branch creation
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+                if (n_items == 0) running = .false.
+                ! Update branch name display
+                call get_repo_info(repo_name, branch_name)
+            case ('R')  ! Delete branch (Shift+r, since 'r' is used for delete file)
+                call branch_delete_prompt()
+                ! No need to refresh files or update branch name (stays on current branch)
             case ('f')  ! Git fetch
                 call git_fetch()
                 ! Refresh files after fetch and include files with incoming changes
@@ -325,6 +342,29 @@ contains
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 ! Note: After successful pull, git diff will show no upstream differences
                 ! so has_incoming will be .false. for all files automatically
+            case ('z')  ! Stash push (save changes)
+                call stash_push_prompt()
+                ! Refresh files after stash
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+                if (n_items == 0) running = .false.
+            case ('Z')  ! Stash pop/apply (restore changes)
+                call stash_pop_apply_prompt()
+                ! Refresh files after stash pop/apply
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
             case ('q', 'Q')  ! Quit
                 running = .false.
             end select
@@ -894,5 +934,78 @@ contains
         ! Wait for keypress to continue
         call read_key(key)
     end subroutine discard_prompt
+
+    subroutine stash_push_prompt()
+        character(len=512) :: stash_msg
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for stash prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mGit Stash (Save)' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Read stash message (optional)
+        call read_line('Stash message (optional): ', stash_msg)
+
+        ! Execute stash push
+        call git_stash_push(stash_msg, success)
+
+        ! Wait for keypress to continue
+        call read_key(key)
+    end subroutine stash_push_prompt
+
+    subroutine stash_pop_apply_prompt()
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for stash pop/apply prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mGit Stash (Pop/Apply)' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Execute stash pop/apply with fzf selection
+        call git_stash_pop_apply(success)
+
+        ! Wait for keypress to continue
+        call read_key(key)
+    end subroutine stash_pop_apply_prompt
+
+    subroutine branch_create_prompt()
+        character(len=512) :: branch_name
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for branch creation
+        call clear_screen()
+        print '(A)', achar(27) // '[1mCreate New Branch' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Read branch name
+        call read_line('New branch name: ', branch_name)
+
+        ! Create branch if name is not empty
+        if (len_trim(branch_name) > 0) then
+            call git_create_branch(branch_name, success)
+            ! Wait for keypress to continue
+            call read_key(key)
+        end if
+    end subroutine branch_create_prompt
+
+    subroutine branch_delete_prompt()
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for branch deletion
+        call clear_screen()
+        print '(A)', achar(27) // '[1mDelete Branch' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Call git branch delete with fzf
+        call git_delete_branch(success)
+
+        ! Wait for keypress to continue
+        call read_key(key)
+    end subroutine branch_delete_prompt
 
 end program fuss

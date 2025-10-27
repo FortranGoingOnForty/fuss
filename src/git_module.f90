@@ -1232,6 +1232,123 @@ contains
         call execute_command_line('sleep 1', exitstat=status_code)
     end subroutine git_switch_branch
 
+    subroutine git_create_branch(branch_name, success)
+        character(len=*), intent(in) :: branch_name
+        logical, intent(out) :: success
+        character(len=1024) :: command
+        integer :: status
+
+        success = .false.
+
+        if (len_trim(branch_name) == 0) then
+            print '(A)', achar(27) // '[33mBranch name cannot be empty' // achar(27) // '[0m'
+            return
+        end if
+
+        ! Create and switch to new branch
+        write(command, '(A,A,A)') 'git switch -c "', trim(branch_name), '" 2>&1'
+        print '(A)', 'Creating new branch...'
+        call execute_command_line(trim(command), exitstat=status)
+
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ Created and switched to branch: ' // trim(branch_name) // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Failed to create branch (may already exist)' // achar(27) // '[0m'
+        end if
+
+        call execute_command_line('sleep 1', exitstat=status)
+    end subroutine git_create_branch
+
+    subroutine git_delete_branch(success)
+        use terminal_module, only: read_key
+        logical, intent(out) :: success
+        integer :: status_code
+        character(len=512) :: selected_branch, current_branch
+        character(len=1024) :: command
+        character(len=1) :: key
+
+        success = .false.
+
+        ! Get current branch name to prevent deleting it
+        call execute_command_line('git rev-parse --abbrev-ref HEAD > /tmp/fuss_current_branch.txt 2>&1', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            print '(A)', achar(27) // '[31m✗ Could not determine current branch' // achar(27) // '[0m'
+            return
+        end if
+
+        open(unit=99, file='/tmp/fuss_current_branch.txt', status='old', action='read', iostat=status_code)
+        if (status_code == 0) then
+            read(99, '(A)', iostat=status_code) current_branch
+            close(99, status='delete')
+        else
+            return
+        end if
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status_code)
+
+        ! Use fzf to select branch to delete (exclude current branch)
+        write(command, '(A,A,A)') 'git branch | grep -v "^* " | sed "s/^  //" | grep -v "^', trim(current_branch), &
+                                  '$" | fzf --height=15 --prompt="Delete branch: " > /tmp/fuss_branch_delete.txt'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status_code)
+
+        if (status_code /= 0) then
+            ! User cancelled
+            return
+        end if
+
+        ! Read selected branch
+        open(unit=99, file='/tmp/fuss_branch_delete.txt', status='old', action='read', iostat=status_code)
+        if (status_code /= 0) return
+
+        read(99, '(A)', iostat=status_code) selected_branch
+        close(99, status='delete')
+
+        if (status_code /= 0 .or. len_trim(selected_branch) == 0) return
+
+        ! Confirm deletion
+        print '(A)', ''
+        print '(A)', 'Delete branch "' // trim(selected_branch) // '"?'
+        print '(A)', 'Press ''d'' for regular delete, ''D'' to force delete, any other key to cancel.'
+        call read_key(key)
+
+        if (key == 'd') then
+            ! Regular delete (will fail if not merged)
+            write(command, '(A,A,A)') 'git branch -d "', trim(selected_branch), '" 2>&1'
+            print '(A)', 'Deleting branch...'
+            call execute_command_line(trim(command), exitstat=status_code)
+
+            if (status_code == 0) then
+                print '(A)', achar(27) // '[32m✓ Deleted branch: ' // trim(selected_branch) // achar(27) // '[0m'
+                success = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Failed to delete (not fully merged? use D to force)' // achar(27) // '[0m'
+            end if
+        else if (key == 'D') then
+            ! Force delete
+            write(command, '(A,A,A)') 'git branch -D "', trim(selected_branch), '" 2>&1'
+            print '(A)', 'Force deleting branch...'
+            call execute_command_line(trim(command), exitstat=status_code)
+
+            if (status_code == 0) then
+                print '(A)', achar(27) // '[32m✓ Force deleted branch: ' // trim(selected_branch) // achar(27) // '[0m'
+                success = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Failed to delete branch' // achar(27) // '[0m'
+            end if
+        else
+            print '(A)', 'Delete cancelled.'
+        end if
+
+        call execute_command_line('sleep 1', exitstat=status_code)
+    end subroutine git_delete_branch
+
     subroutine git_push_tag(tag_name, success)
         character(len=*), intent(in) :: tag_name
         logical, intent(out) :: success
@@ -1252,5 +1369,131 @@ contains
             print '(A)', achar(27) // '[31m✗ Failed to push tag' // achar(27) // '[0m'
         end if
     end subroutine git_push_tag
+
+    subroutine git_stash_push(stash_message, success)
+        character(len=*), intent(in) :: stash_message
+        logical, intent(out) :: success
+        character(len=2048) :: command
+        integer :: status
+
+        success = .false.
+
+        ! Build stash push command with optional message
+        if (len_trim(stash_message) > 0) then
+            write(command, '(A,A,A)') 'git stash push -m "', trim(stash_message), '" 2>&1'
+        else
+            command = 'git stash push 2>&1'
+        end if
+
+        print '(A)', 'Stashing changes...'
+        call execute_command_line(trim(command), exitstat=status)
+
+        if (status == 0) then
+            print '(A)', achar(27) // '[32m✓ Changes stashed successfully!' // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Stash failed (no changes to stash?)' // achar(27) // '[0m'
+        end if
+
+        print '(A)', 'Press any key to continue...'
+    end subroutine git_stash_push
+
+    subroutine git_stash_pop_apply(success)
+        use terminal_module, only: read_key
+        logical, intent(out) :: success
+        integer :: status_code
+        character(len=512) :: selected_stash
+        character(len=1024) :: command
+        character(len=1) :: key
+
+        success = .false.
+
+        ! Check if there are any stashes
+        call execute_command_line('git stash list > /tmp/fuss_stash_check.txt 2>&1', exitstat=status_code)
+        if (status_code /= 0) then
+            print '(A)', achar(27) // '[33mNo stashes available' // achar(27) // '[0m'
+            print '(A)', 'Press any key to continue...'
+            return
+        end if
+
+        ! Check if stash list is empty
+        call execute_command_line('test -s /tmp/fuss_stash_check.txt', exitstat=status_code)
+        if (status_code /= 0) then
+            print '(A)', achar(27) // '[33mNo stashes available' // achar(27) // '[0m'
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('rm -f /tmp/fuss_stash_check.txt', exitstat=status_code)
+            return
+        end if
+
+        call execute_command_line('rm -f /tmp/fuss_stash_check.txt', exitstat=status_code)
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status_code)
+
+        ! Use fzf to select stash with preview
+        call execute_command_line('git stash list --format="%gd: %s" | ' // &
+                                  'fzf --height=15 --prompt="Select stash: " ' // &
+                                  '--preview="git stash show -p {1}" --preview-window=right:50% ' // &
+                                  '> /tmp/fuss_stash_select.txt', &
+                                  exitstat=status_code)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status_code)
+
+        if (status_code /= 0) then
+            ! User cancelled
+            return
+        end if
+
+        ! Read selected stash
+        open(unit=99, file='/tmp/fuss_stash_select.txt', status='old', action='read', iostat=status_code)
+        if (status_code /= 0) return
+
+        read(99, '(A)', iostat=status_code) selected_stash
+        close(99, status='delete')
+
+        if (status_code /= 0 .or. len_trim(selected_stash) == 0) return
+
+        ! Extract stash reference (e.g., "stash@{0}")
+        ! Format is "stash@{N}: message", so we take everything before the first ":"
+        command = selected_stash(1:index(selected_stash, ':') - 1)
+
+        ! Ask user whether to pop or apply
+        print '(A)', ''
+        print '(A)', 'Pop (apply and remove) or Apply (keep stash)?'
+        print '(A)', 'Press ''p'' to pop, ''a'' to apply, any other key to cancel.'
+        call read_key(key)
+
+        if (key == 'p' .or. key == 'P') then
+            ! Pop the stash (apply and remove)
+            print '(A)', 'Popping stash...'
+            write(command, '(A,A,A)') 'git stash pop "', trim(command), '" 2>&1'
+            call execute_command_line(trim(command), exitstat=status_code)
+
+            if (status_code == 0) then
+                print '(A)', achar(27) // '[32m✓ Stash popped successfully!' // achar(27) // '[0m'
+                success = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Stash pop failed (conflicts?)' // achar(27) // '[0m'
+            end if
+        else if (key == 'a' .or. key == 'A') then
+            ! Apply the stash (keep it)
+            print '(A)', 'Applying stash...'
+            write(command, '(A,A,A)') 'git stash apply "', trim(command), '" 2>&1'
+            call execute_command_line(trim(command), exitstat=status_code)
+
+            if (status_code == 0) then
+                print '(A)', achar(27) // '[32m✓ Stash applied successfully!' // achar(27) // '[0m'
+                success = .true.
+            else
+                print '(A)', achar(27) // '[31m✗ Stash apply failed (conflicts?)' // achar(27) // '[0m'
+            end if
+        else
+            print '(A)', 'Stash operation cancelled.'
+        end if
+
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
+    end subroutine git_stash_pop_apply
 
 end module git_module
