@@ -172,10 +172,19 @@ contains
                 call navigate_down(items, n_items, selected)
             case ('k', 'A')  ! k or up arrow - navigate to previous sibling (skip nested items)
                 call navigate_up(items, n_items, selected)
-            case ('D')  ! Left arrow - exit directory or collapse
+            case ('D')  ! Left arrow - navigate to parent directory
                 call navigate_left(items, n_items, selected, tree_root)
             case ('C')  ! Right arrow - enter directory
                 call navigate_right(items, n_items, selected, tree_root)
+            case (' ')  ! Space bar - toggle expand/collapse
+                if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
+                    ! Toggle the expanded state
+                    items(selected)%node%is_expanded = .not. items(selected)%node%is_expanded
+                    ! Rebuild item list to reflect change
+                    call rebuild_item_list_from_tree(tree_root, items, n_items)
+                    ! Adjust selection if needed
+                    if (selected > n_items .and. n_items > 0) selected = n_items
+                end if
             case ('a')  ! Stage file or directory (lowercase to avoid conflict with arrow A)
                 ! Check if it's a directory - stage all files in it
                 if (.not. items(selected)%is_file) then
@@ -790,17 +799,7 @@ contains
 
         if (n_items == 0) return
 
-        ! If we're on an expanded directory, collapse it
-        if (.not. items(selected)%is_file .and. items(selected)%node%is_expanded) then
-            items(selected)%node%is_expanded = .false.
-            ! Rebuild item list
-            call rebuild_item_list_from_tree(tree_root, items, n_items)
-            ! Adjust selection if needed
-            if (selected > n_items .and. n_items > 0) selected = n_items
-            return
-        end if
-
-        ! Otherwise, move to parent (previous item with depth-1)
+        ! Move to parent (previous item with depth-1)
         target_depth = items(selected)%depth - 1
         if (target_depth < 0) return  ! Already at root level
 
