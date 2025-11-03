@@ -868,6 +868,11 @@ contains
         print '(A)', achar(27) // '[1mGit Tag' // achar(27) // '[0m'
         print '(A)', ''
 
+        ! Fetch tags from remote to ensure list is up to date
+        print '(A)', 'Fetching tags from remote...'
+        call execute_command_line('git fetch --tags --quiet 2>&1', exitstat=status)
+        print '(A)', ''
+
         ! Show existing tags in compact format
         print '(A)', achar(27) // '[2mExisting tags:' // achar(27) // '[0m'
         call execute_command_line('git tag --sort=-version:refname | head -10 | column -c 80 2>/dev/null || git tag --sort=-version:refname | head -10', exitstat=status)
