@@ -153,6 +153,50 @@ contains
 
     ! ========== End Gitignore Detection ==========
 
+    ! Helper function to unquote filenames from git status --porcelain
+    ! Git quotes filenames that contain special characters (spaces, quotes, etc.)
+    function unquote_filename(quoted_path) result(unquoted_path)
+        character(len=*), intent(in) :: quoted_path
+        character(len=512) :: unquoted_path
+        integer :: i, j, path_len
+        character(len=512) :: temp_path
+
+        temp_path = trim(adjustl(quoted_path))
+        path_len = len_trim(temp_path)
+
+        ! Check if filename is quoted (starts and ends with double quote)
+        if (path_len >= 2 .and. temp_path(1:1) == '"' .and. temp_path(path_len:path_len) == '"') then
+            ! Remove surrounding quotes and handle escape sequences
+            unquoted_path = ''
+            j = 1
+            i = 2  ! Start after opening quote
+            do while (i < path_len)
+                if (temp_path(i:i) == '\' .and. i + 1 < path_len) then
+                    ! Handle escape sequences
+                    i = i + 1
+                    select case (temp_path(i:i))
+                    case ('n')
+                        unquoted_path(j:j) = achar(10)  ! newline
+                    case ('t')
+                        unquoted_path(j:j) = achar(9)   ! tab
+                    case ('\', '"')
+                        unquoted_path(j:j) = temp_path(i:i)  ! literal \ or "
+                    case default
+                        ! Unknown escape - keep as is
+                        unquoted_path(j:j+1) = '\' // temp_path(i:i)
+                        j = j + 1
+                    end select
+                else
+                    unquoted_path(j:j) = temp_path(i:i)
+                end if
+                i = i + 1
+                j = j + 1
+            end do
+        else
+            ! Not quoted - return as is
+            unquoted_path = temp_path
+        end if
+    end function unquote_filename
 
     subroutine get_dirty_files(files, n_files)
         type(file_entry), allocatable, intent(out) :: files(:)
@@ -192,7 +236,8 @@ contains
             if (len_trim(line) > 3) then
                 ! Parse git status line (format: "XY filename")
                 git_status = line(1:2)
-                file_path = adjustl(line(4:))
+                ! Unquote filename (git quotes filenames with spaces/special chars)
+                file_path = unquote_filename(line(4:))
 
                 ! Skip if path is empty
                 if (len_trim(file_path) == 0) cycle
@@ -871,7 +916,8 @@ contains
             if (iostat /= 0) exit
 
             if (len_trim(line) > 0) then
-                incoming_path = trim(line)
+                ! Unquote filename (git quotes filenames with spaces/special chars)
+                incoming_path = trim(unquote_filename(line))
 
                 ! Check if this file already exists in the list
                 already_exists = .false.
@@ -958,7 +1004,8 @@ contains
                     call resize_string_array(incoming_paths, max_incoming * 2)
                     max_incoming = max_incoming * 2
                 end if
-                incoming_paths(n_incoming) = trim(line)
+                ! Unquote filename (git quotes filenames with spaces/special chars)
+                incoming_paths(n_incoming) = trim(unquote_filename(line))
             end if
         end do
 
