@@ -649,6 +649,53 @@ contains
         print '(A)', 'Press any key to continue...'
     end subroutine git_commit_with_message
 
+    subroutine get_last_commit_message(message)
+        character(len=*), intent(out) :: message
+        integer :: status, unit_num, iostat
+        character(len=512) :: line
+
+        message = ''
+
+        ! Get the last commit message using git log
+        call execute_command_line('git log -1 --pretty=%B > /tmp/fuss_last_commit.txt 2>/dev/null', exitstat=status)
+
+        if (status /= 0) return
+
+        ! Read the commit message
+        open(newunit=unit_num, file='/tmp/fuss_last_commit.txt', status='old', action='read', iostat=iostat)
+        if (iostat /= 0) return
+
+        ! Read first line (single-line commit message)
+        read(unit_num, '(A)', iostat=iostat) line
+        if (iostat == 0) then
+            message = trim(line)
+        end if
+
+        close(unit_num, status='delete')
+    end subroutine get_last_commit_message
+
+    subroutine git_commit_amend(message, success)
+        character(len=*), intent(in) :: message
+        logical, intent(out) :: success
+        character(len=2048) :: command
+        integer :: status
+
+        ! Build git commit --amend command with message
+        write(command, '(A,A,A)') 'git commit --amend -m "', trim(message), '"'
+        call execute_command_line(trim(command), exitstat=status)
+
+        success = (status == 0)
+
+        ! Show feedback
+        if (success) then
+            print '(A)', achar(27) // '[32m✓ Commit amended successfully!' // achar(27) // '[0m'
+        else
+            print '(A)', achar(27) // '[31m✗ Amend failed' // achar(27) // '[0m'
+        end if
+
+        print '(A)', 'Press any key to continue...'
+    end subroutine git_commit_amend
+
     subroutine get_git_status_output(status_lines, n_lines, max_lines)
         character(len=512), allocatable, intent(out) :: status_lines(:)
         integer, intent(out) :: n_lines

@@ -260,6 +260,17 @@ contains
                 call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items, tree_root)
                 if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('M')  ! Amend last commit (Shift+m)
+                call amend_commit_prompt()
+                ! Refresh files after amend commit
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root)
+                if (selected > n_items .and. n_items > 0) selected = n_items
             case ('s')  ! Show git status (lowercase)
                 call show_status_view()
             case ('p')  ! Push (lowercase)
@@ -833,6 +844,47 @@ contains
             call read_key(key)
         end if
     end subroutine commit_prompt
+
+    subroutine amend_commit_prompt()
+        character(len=512) :: commit_msg, last_commit_msg
+        logical :: success
+        character(len=1) :: key
+
+        ! Clear screen for amend commit prompt
+        call clear_screen()
+        print '(A)', achar(27) // '[1mGit Commit --amend' // achar(27) // '[0m'
+        print '(A)', ''
+
+        ! Get the last commit message as default
+        call get_last_commit_message(last_commit_msg)
+
+        ! Show the last commit message
+        if (len_trim(last_commit_msg) > 0) then
+            print '(A)', achar(27) // '[2mLast commit message:' // achar(27) // '[0m'
+            print '(A)', '  ' // trim(last_commit_msg)
+            print '(A)', ''
+        end if
+
+        ! Read new commit message
+        call read_line('New commit message (empty to keep): ', commit_msg)
+
+        ! If no message provided, keep the old one
+        if (len_trim(commit_msg) == 0) then
+            commit_msg = last_commit_msg
+        end if
+
+        ! Execute amend if we have a message
+        if (len_trim(commit_msg) > 0) then
+            call git_commit_amend(commit_msg, success)
+
+            ! Wait for keypress to continue
+            call read_key(key)
+        else
+            print '(A)', 'No commit message provided. Amend cancelled.'
+            print '(A)', 'Press any key to continue...'
+            call read_key(key)
+        end if
+    end subroutine amend_commit_prompt
 
     subroutine show_status_view()
         ! Use less for scrollable, searchable git status view
