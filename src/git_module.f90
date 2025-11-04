@@ -891,7 +891,8 @@ contains
 
         if (status_code /= 0) then
             print '(A)', 'No upstream selected.'
-            call execute_command_line('sleep 1', exitstat=status_code)
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
             ! Re-enable cbreak mode
             call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status_code)
             return
@@ -914,7 +915,8 @@ contains
                 else
                     print '(A)', achar(27) // '[31m✗ Failed to set upstream' // achar(27) // '[0m'
                 end if
-                call execute_command_line('sleep 1', exitstat=status_code)
+                print '(A)', ''
+                print '(A)', 'Press any key to continue...'
             end if
         end if
 
@@ -1321,17 +1323,30 @@ contains
 
         if (status_code /= 0) then
             ! User cancelled
+            print '(A)', 'Branch switch cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
             return
         end if
 
         ! Read selected branch
         open(unit=99, file='/tmp/fuss_branch_select.txt', status='old', action='read', iostat=status_code)
-        if (status_code /= 0) return
+        if (status_code /= 0) then
+            print '(A)', 'Branch switch cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            return
+        end if
 
         read(99, '(A)', iostat=status_code) selected_branch
         close(99, status='delete')
 
-        if (status_code /= 0 .or. len_trim(selected_branch) == 0) return
+        if (status_code /= 0 .or. len_trim(selected_branch) == 0) then
+            print '(A)', 'Branch switch cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            return
+        end if
 
         ! Switch to the branch
         write(command, '(A,A,A)') 'git switch "', trim(selected_branch), '" 2>&1'
@@ -1344,7 +1359,8 @@ contains
             print '(A)', achar(27) // '[31m✗ Failed to switch branch' // achar(27) // '[0m'
         end if
 
-        call execute_command_line('sleep 1', exitstat=status_code)
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
     end subroutine git_switch_branch
 
     subroutine git_create_branch(branch_name, success)
@@ -1415,17 +1431,30 @@ contains
 
         if (status_code /= 0) then
             ! User cancelled
+            print '(A)', 'Branch deletion cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
             return
         end if
 
         ! Read selected branch
         open(unit=99, file='/tmp/fuss_branch_delete.txt', status='old', action='read', iostat=status_code)
-        if (status_code /= 0) return
+        if (status_code /= 0) then
+            print '(A)', 'Branch deletion cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            return
+        end if
 
         read(99, '(A)', iostat=status_code) selected_branch
         close(99, status='delete')
 
-        if (status_code /= 0 .or. len_trim(selected_branch) == 0) return
+        if (status_code /= 0 .or. len_trim(selected_branch) == 0) then
+            print '(A)', 'Branch deletion cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            return
+        end if
 
         ! Confirm deletion
         print '(A)', ''
@@ -1461,7 +1490,8 @@ contains
             print '(A)', 'Delete cancelled.'
         end if
 
-        call execute_command_line('sleep 1', exitstat=status_code)
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
     end subroutine git_delete_branch
 
     subroutine git_push_tag(tag_name, success)
@@ -1557,17 +1587,30 @@ contains
 
         if (status_code /= 0) then
             ! User cancelled
+            print '(A)', 'Stash operation cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
             return
         end if
 
         ! Read selected stash
         open(unit=99, file='/tmp/fuss_stash_select.txt', status='old', action='read', iostat=status_code)
-        if (status_code /= 0) return
+        if (status_code /= 0) then
+            print '(A)', 'Stash operation cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            return
+        end if
 
         read(99, '(A)', iostat=status_code) selected_stash
         close(99, status='delete')
 
-        if (status_code /= 0 .or. len_trim(selected_stash) == 0) return
+        if (status_code /= 0 .or. len_trim(selected_stash) == 0) then
+            print '(A)', 'Stash operation cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            return
+        end if
 
         ! Extract stash reference (e.g., "stash@{0}")
         ! Format is "stash@{N}: message", so we take everything before the first ":"
