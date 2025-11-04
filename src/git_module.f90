@@ -886,7 +886,7 @@ contains
 
         ! Use fzf to select remote branch
         call execute_command_line('git branch -r | grep -v HEAD | sed "s/^  //" | ' // &
-                                  'fzf --height=10 --prompt="Select upstream: " > /tmp/fuss_upstream.txt', &
+                                  'fzf --height=10 --prompt="Select upstream: " --header="ESC to cancel" > /tmp/fuss_upstream.txt', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
@@ -1314,7 +1314,8 @@ contains
         ! Use fzf to select branch (local and remote)
         ! Show local branches and remote branches, remove leading spaces and origin/ prefix for display
         call execute_command_line('(git branch --all | grep -v HEAD | sed "s/^[* ] //" | sed "s/remotes\\/origin\\///" | sort -u) | ' // &
-                                  'fzf --height=15 --prompt="Switch to branch: " --preview="git log --oneline --graph --color=always {}" ' // &
+                                  'fzf --height=15 --prompt="Switch to branch: " --header="ESC to cancel" ' // &
+                                  '--preview="git log --oneline --graph --color=always {}" ' // &
                                   '--preview-window=right:50% > /tmp/fuss_branch_select.txt', &
                                   exitstat=status_code)
 
@@ -1423,7 +1424,7 @@ contains
 
         ! Use fzf to select branch to delete (exclude current branch)
         write(command, '(A,A,A)') 'git branch | grep -v "^* " | sed "s/^  //" | grep -v "^', trim(current_branch), &
-                                  '$" | fzf --height=15 --prompt="Delete branch: " > /tmp/fuss_branch_delete.txt'
+                                  '$" | fzf --height=15 --prompt="Delete branch: " --header="ESC to cancel" > /tmp/fuss_branch_delete.txt'
         call execute_command_line(trim(command), exitstat=status_code)
 
         ! Re-enable cbreak mode
@@ -1577,7 +1578,7 @@ contains
 
         ! Use fzf to select stash with preview
         call execute_command_line('git stash list --format="%gd: %s" | ' // &
-                                  'fzf --height=15 --prompt="Select stash: " ' // &
+                                  'fzf --height=15 --prompt="Select stash: " --header="ESC to cancel" ' // &
                                   '--preview="git stash show -p {1}" --preview-window=right:50% ' // &
                                   '> /tmp/fuss_stash_select.txt', &
                                   exitstat=status_code)
