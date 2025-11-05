@@ -183,6 +183,11 @@ contains
         character(len=32) :: search_buffer
         integer :: search_length
         integer(8) :: last_search_tick, current_tick, clock_rate
+        ! Rename state for inline renaming
+        logical :: in_rename_mode
+        character(len=256) :: rename_buffer
+        character(len=256) :: rename_original_name
+        integer :: rename_cursor_pos
         type(tree_node), pointer :: tree_root
 
         ! Initialize tree pointer
@@ -256,6 +261,12 @@ contains
         last_search_tick = 0
         call system_clock(count_rate=clock_rate)
 
+        ! Initialize rename state
+        in_rename_mode = .false.
+        rename_buffer = ''
+        rename_original_name = ''
+        rename_cursor_pos = 0
+
         ! Partial redraw optimization: initialize tracking state
         prev_selected = 0  ! Force initial draw
         prev_viewport = 0
@@ -284,7 +295,7 @@ contains
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
                                            repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                           search_buffer, search_length)
+                                           in_rename_mode, rename_buffer, rename_cursor_pos)
                 needs_full_redraw = .false.
             else if (selected /= prev_selected) then
                 ! Only selection changed within same viewport - still need full redraw for now
@@ -292,7 +303,7 @@ contains
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
                                            repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                           search_buffer, search_length)
+                                           in_rename_mode, rename_buffer, rename_cursor_pos)
             end if
 
             ! Update tracking state
@@ -313,8 +324,12 @@ contains
             ! Always use fast blocking read - timeouts are too slow
             call read_key(key)
 
-            ! DEBUG: Log all control characters to see what we're getting
-            if (ichar(key) < 32) then
+            ! DEBUG: Log ALL keys when in rename mode, otherwise just control chars
+            if (in_rename_mode) then
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A,I0,A)') 'RENAME INPUT: code=', ichar(key), ' (all keys logged in rename mode)'
+                close(99)
+            else if (ichar(key) < 32) then
                 open(99, file='/tmp/fuss_debug.log', position='append')
                 write(99, '(A,I0)') 'Control char received: ', ichar(key)
                 close(99)
@@ -343,7 +358,7 @@ contains
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
                                            repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                           search_buffer, search_length)
+                                           in_rename_mode, rename_buffer, rename_cursor_pos)
                 ! Restore cbreak mode
                 call enable_raw_mode()
                 cycle  ! Skip rest of key handling
@@ -367,16 +382,39 @@ contains
                 cycle
             end if
 
-            ! Handle ESC key - exit git mode or clear search
+            ! Check for alt-n to enter rename mode (available in both modes)
+            ! alt-n is encoded as achar(1 + ichar('n') - ichar('a')) = achar(14)
+            if (key == achar(14) .and. .not. in_rename_mode) then
+                ! Enter rename mode
+                if (associated(items(selected)%node)) then
+                    in_rename_mode = .true.
+                    rename_original_name = items(selected)%node%name
+                    rename_buffer = items(selected)%node%name
+                    rename_cursor_pos = len_trim(rename_buffer)
+                    ! Stay in cbreak mode - raw mode breaks terminal output
+                    needs_full_redraw = .true.
+                end if
+                cycle
+            end if
+
+            ! Handle ESC key - exit rename mode, git mode, or clear search
             if (key == achar(27)) then
-                if (mode == 'git') then
+                if (in_rename_mode) then
+                    ! Cancel rename
+                    in_rename_mode = .false.
+                    rename_buffer = ''
+                    rename_original_name = ''
+                    rename_cursor_pos = 0
+                    needs_full_redraw = .true.
+                    cycle
+                else if (mode == 'git') then
                     mode = 'normal'
                     ! Temporarily restore terminal to flush output properly
                     call execute_command_line('stty sane < /dev/tty')
                     call clear_screen()
                     call draw_interactive_tree(tree_root, items, n_items, selected, &
                                                repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                               search_buffer, search_length)
+                                               in_rename_mode, rename_buffer, rename_cursor_pos)
                     ! Restore cbreak mode
                     call enable_raw_mode()
                     cycle
@@ -388,6 +426,83 @@ contains
                     cycle
                 end if
                 ! In normal mode, ESC does nothing for now
+                cycle
+            end if
+
+            ! Rename mode key handling - intercept all keys when in rename mode
+            if (in_rename_mode) then
+                ! Handle Tab to confirm rename (Enter codes checked but won't work in cbreak mode)
+                ! achar(9) = Tab, achar(10) = LF, achar(13) = CR (cbreak mode eats Enter)
+                if (key == achar(10) .or. key == achar(13) .or. key == achar(9) .or. &
+                    key == achar(0) .or. ichar(key) == 10 .or. ichar(key) == 13) then
+                    ! Tab saves rename (Enter codes kept for compatibility but don't work)
+                    open(99, file='/tmp/fuss_debug.log', position='append')
+                    write(99, '(A)') 'RENAME MODE: TAB detected - executing rename'
+                    close(99)
+                    call execute_rename(items(selected)%path, trim(rename_buffer))
+                    in_rename_mode = .false.
+                    rename_buffer = ''
+                    rename_original_name = ''
+                    rename_cursor_pos = 0
+                    ! Force refresh to show renamed file
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                    needs_full_redraw = .true.
+                    cycle
+                else if (key == achar(127) .or. key == achar(8)) then
+                    ! Backspace - delete character before cursor
+                    if (rename_cursor_pos > 0) then
+                        ! Delete character before cursor
+                        if (rename_cursor_pos == len_trim(rename_buffer)) then
+                            ! Cursor at end - simple delete
+                            rename_buffer = rename_buffer(1:len_trim(rename_buffer)-1)
+                        else
+                            ! Cursor in middle - delete and shift left
+                            rename_buffer = rename_buffer(1:rename_cursor_pos-1) // &
+                                          rename_buffer(rename_cursor_pos+1:len_trim(rename_buffer))
+                        end if
+                        rename_cursor_pos = rename_cursor_pos - 1
+                        needs_full_redraw = .true.
+                    end if
+                    cycle
+                ! NOTE: Arrow keys (after escape processing) are indistinguishable from uppercase A/B/C/D
+                ! Trade-off: Prioritize arrow functionality over uppercase C/D letters
+                ! Uppercase A/B work fine, C/D reserved for arrows
+                else if (key == 'C') then
+                    ! Right arrow - move cursor right (also blocks uppercase C)
+                    if (rename_cursor_pos < len_trim(rename_buffer)) then
+                        rename_cursor_pos = rename_cursor_pos + 1
+                        needs_full_redraw = .true.
+                    end if
+                    cycle
+                else if (key == 'D') then
+                    ! Left arrow - move cursor left (also blocks uppercase D)
+                    if (rename_cursor_pos > 0) then
+                        rename_cursor_pos = rename_cursor_pos - 1
+                        needs_full_redraw = .true.
+                    end if
+                    cycle
+                ! A and B (up/down arrows) are allowed as uppercase letters - arrows ignored
+                else if ((key >= 'a' .and. key <= 'z') .or. &
+                         (key >= 'A' .and. key <= 'Z') .or. &
+                         (key >= '0' .and. key <= '9') .or. &
+                         key == '_' .or. key == '-' .or. key == '.' .or. key == ' ') then
+                    ! Printable character - insert at cursor position
+                    if (len_trim(rename_buffer) < 255) then
+                        if (rename_cursor_pos == len_trim(rename_buffer)) then
+                            ! Cursor at end - simple append
+                            rename_buffer = trim(rename_buffer) // key
+                        else
+                            ! Cursor in middle - insert and shift right
+                            rename_buffer = rename_buffer(1:rename_cursor_pos) // key // &
+                                          rename_buffer(rename_cursor_pos+1:len_trim(rename_buffer))
+                        end if
+                        rename_cursor_pos = rename_cursor_pos + 1
+                        needs_full_redraw = .true.
+                    end if
+                    cycle
+                end if
+                ! Ignore all other keys in rename mode
                 cycle
             end if
 
@@ -1739,5 +1854,102 @@ contains
             end if
         end do
     end subroutine to_lowercase
+
+    subroutine execute_rename(old_path, new_name)
+        ! Execute file/directory rename
+        character(len=*), intent(in) :: old_path, new_name
+        character(len=1024) :: dirname, new_path, command, old_path_lower, new_path_lower
+        character(len=1024) :: old_basename, new_basename
+        integer :: status, last_slash, old_last_slash, new_last_slash
+        logical :: file_exists, case_only_change
+
+        ! Validate new name
+        if (len_trim(new_name) == 0) then
+            call show_message_and_wait('Error: Filename cannot be empty!')
+            return
+        end if
+
+        ! Get directory name from old path
+        last_slash = index(old_path, '/', back=.true.)
+        if (last_slash > 0) then
+            dirname = old_path(1:last_slash)
+        else
+            dirname = './'
+        end if
+
+        ! Build new full path
+        write(new_path, '(A,A)') trim(dirname), trim(new_name)
+
+        ! If it's the exact same name, do nothing
+        if (trim(new_path) == trim(old_path)) then
+            return
+        end if
+
+        ! Check if this is a case-only change (for case-insensitive filesystems like macOS)
+        ! Extract just the basename (filename) for comparison to avoid path prefix issues
+        old_last_slash = index(old_path, '/', back=.true.)
+        new_last_slash = index(new_path, '/', back=.true.)
+
+        if (old_last_slash > 0) then
+            old_basename = old_path(old_last_slash+1:)
+        else
+            old_basename = old_path
+        end if
+
+        if (new_last_slash > 0) then
+            new_basename = new_path(new_last_slash+1:)
+        else
+            new_basename = new_path
+        end if
+
+        ! Now compare the basenames in lowercase
+        old_path_lower = old_basename
+        new_path_lower = new_basename
+        call to_lowercase(old_path_lower)
+        call to_lowercase(new_path_lower)
+        case_only_change = (trim(old_path_lower) == trim(new_path_lower))
+
+        ! Debug logging
+        open(99, file='/tmp/fuss_debug.log', position='append')
+        write(99, '(A,A)') 'RENAME: old_path = ', trim(old_path)
+        write(99, '(A,A)') 'RENAME: new_path = ', trim(new_path)
+        write(99, '(A,A)') 'RENAME: old_basename = ', trim(old_basename)
+        write(99, '(A,A)') 'RENAME: new_basename = ', trim(new_basename)
+        write(99, '(A,A)') 'RENAME: old_path_lower = ', trim(old_path_lower)
+        write(99, '(A,A)') 'RENAME: new_path_lower = ', trim(new_path_lower)
+        write(99, '(A,L)') 'RENAME: case_only_change = ', case_only_change
+        close(99)
+
+        ! Check if new path already exists (skip check for case-only changes)
+        if (.not. case_only_change) then
+            inquire(file=trim(new_path), exist=file_exists)
+            if (file_exists) then
+                call show_message_and_wait('Error: A file with that name already exists!')
+                return
+            end if
+        end if
+
+        ! Execute rename using mv command
+        ! Use -f flag to force case-only renames on case-insensitive filesystems
+        write(command, '(A,A,A,A,A)') 'mv -f "', trim(old_path), '" "', trim(new_path), '" 2>/dev/null'
+        call execute_command_line(trim(command), exitstat=status)
+
+        if (status /= 0) then
+            call show_message_and_wait('Error: Rename failed! Check permissions.')
+            return
+        end if
+
+    end subroutine execute_rename
+
+    subroutine show_message_and_wait(message)
+        ! Show a message and wait for user to press a key
+        character(len=*), intent(in) :: message
+        character(len=1) :: key
+
+        print '(A)', ''
+        print '(A)', trim(message)
+        print '(A)', 'Press any key to continue...'
+        call wait_for_key(key)
+    end subroutine show_message_and_wait
 
 end program fuss
