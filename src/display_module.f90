@@ -129,14 +129,19 @@ contains
     end subroutine print_tree_node
 
     subroutine draw_interactive_tree(tree_root, items, n_items, selected, &
-                                     repo_name, branch_name, viewport_offset, visible_items)
+                                     repo_name, branch_name, viewport_offset, visible_items, top_padding)
         type(tree_node), pointer, intent(in) :: tree_root
         integer, intent(in) :: n_items, selected
         type(selectable_item), intent(in) :: items(:)
         character(len=*), intent(in) :: repo_name, branch_name
-        integer, intent(in) :: viewport_offset, visible_items
-        integer :: item_idx, viewport_end
+        integer, intent(in) :: viewport_offset, visible_items, top_padding
+        integer :: item_idx, viewport_end, i
         character(len=512) :: status_line
+
+        ! Add blank lines at top as padding for terminals that need it (fixes WezTerm/Ghostty)
+        do i = 1, top_padding
+            print '(A)', ''
+        end do
 
         ! Display repo:branch info at top if available
         if (len_trim(repo_name) > 0 .and. len_trim(branch_name) > 0) then

@@ -91,12 +91,22 @@ contains
         integer :: n_files, n_items, selected, i, status
         character(len=1) :: key
         logical :: running
-        character(len=256) :: repo_name, branch_name
-        integer :: term_height, viewport_offset, visible_items
+        character(len=256) :: repo_name, branch_name, term_program
+        integer :: term_height, viewport_offset, visible_items, top_padding
         type(tree_node), pointer :: tree_root
 
         ! Initialize tree pointer
         tree_root => null()
+
+        ! Detect terminal type for padding (fixes WezTerm/Ghostty top line cutoff)
+        call get_environment_variable("TERM_PROGRAM", term_program)
+        if (index(term_program, "WezTerm") > 0 .or. index(term_program, "ghostty") > 0) then
+            top_padding = 2  ! WezTerm/Ghostty need 2 lines of padding
+        else if (index(term_program, "Apple_Terminal") > 0 .or. index(term_program, "iTerm") > 0) then
+            top_padding = 2  ! Terminal.app and iTerm2 also need 2 lines
+        else
+            top_padding = 1  ! Other terminals need 1 line
+        end if
 
         ! Get repo and branch info
         call get_repo_info(repo_name, branch_name)
@@ -161,7 +171,7 @@ contains
             ! Clear screen and redraw
             call clear_screen()
             call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                       repo_name, branch_name, viewport_offset, visible_items)
+                                       repo_name, branch_name, viewport_offset, visible_items, top_padding)
 
             ! Read key
             call read_key(key)
