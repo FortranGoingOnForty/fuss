@@ -52,6 +52,84 @@ contains
         call read_key(key)
     end subroutine wait_for_key
 
+    subroutine read_key_with_timeout(key, timeout_ms, timed_out)
+        ! Read a key with timeout (in milliseconds)
+        ! If timeout occurs, timed_out is set to .true. and key is set to null
+        character(len=1), intent(out) :: key
+        integer, intent(in) :: timeout_ms
+        logical, intent(out) :: timed_out
+        integer :: status
+        character(len=256) :: cmd
+        integer :: unit_num, iostat
+
+        timed_out = .false.
+        key = achar(0)
+
+        ! Use bash read with timeout to read a single character
+        ! Timeout is in fractional seconds
+        write(cmd, '(A,F6.3,A)') 'bash -c "read -t ', real(timeout_ms)/1000.0, &
+            ' -n 1 -s key < /dev/tty && echo -n $key" > ' // FUSS_TEMP // ' 2>/dev/null'
+
+        call execute_command_line(trim(cmd), exitstat=status)
+
+        if (status /= 0) then
+            ! Timeout occurred (read returned non-zero)
+            timed_out = .true.
+            return
+        end if
+
+        ! Read the character from temp file
+        open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+        if (iostat == 0) then
+            read(unit_num, '(A1)', iostat=iostat) key
+            close(unit_num, status='delete')
+            if (iostat /= 0) then
+                ! Empty file means timeout
+                timed_out = .true.
+                key = achar(0)
+            end if
+        else
+            timed_out = .true.
+        end if
+
+        ! Handle arrow keys and escape sequences
+        if (.not. timed_out .and. key == achar(27)) then
+            ! Detected ESC - try to read next char quickly
+            write(cmd, '(A)') 'bash -c "read -t 0.05 -n 1 -s key < /dev/tty && echo -n $key" > ' // &
+                              FUSS_TEMP // ' 2>/dev/null'
+            call execute_command_line(trim(cmd), exitstat=status)
+
+            if (status == 0) then
+                open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+                if (iostat == 0) then
+                    read(unit_num, '(A1)', iostat=iostat) key
+                    close(unit_num, status='delete')
+
+                    ! Check for arrow keys (ESC [ A/B/C/D)
+                    if (key == '[') then
+                        ! Read final character
+                        write(cmd, '(A)') 'bash -c "read -t 0.05 -n 1 -s key < /dev/tty && echo -n $key" > ' // &
+                                          FUSS_TEMP // ' 2>/dev/null'
+                        call execute_command_line(trim(cmd), exitstat=status)
+                        if (status == 0) then
+                            open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+                            if (iostat == 0) then
+                                read(unit_num, '(A1)', iostat=iostat) key
+                                close(unit_num, status='delete')
+                            end if
+                        end if
+                    else if (key >= 'a' .and. key <= 'z') then
+                        ! Alt-letter: encode as control char
+                        key = achar(1 + ichar(key) - ichar('a'))
+                    end if
+                end if
+            else
+                ! Just ESC alone
+                key = achar(27)
+            end if
+        end if
+    end subroutine read_key_with_timeout
+
     subroutine read_key(key)
         character(len=1), intent(out) :: key
         character(len=3) :: escape_seq

@@ -182,7 +182,7 @@ contains
         ! Search state for fuzzy jump
         character(len=32) :: search_buffer
         integer :: search_length
-        real(8) :: last_search_time, current_time
+        integer(8) :: last_search_tick, current_tick, clock_rate
         type(tree_node), pointer :: tree_root
 
         ! Initialize tree pointer
@@ -253,7 +253,8 @@ contains
         ! Initialize search state
         search_buffer = ''
         search_length = 0
-        last_search_time = 0.0d0
+        last_search_tick = 0
+        call system_clock(count_rate=clock_rate)
 
         ! Partial redraw optimization: initialize tracking state
         prev_selected = 0  ! Force initial draw
@@ -300,15 +301,16 @@ contains
 
             ! Check search timeout (1 second)
             if (search_length > 0) then
-                current_time = get_wall_time()
-                if (current_time - last_search_time > 1.0d0) then
+                call system_clock(current_tick)
+                ! Check if 1 second has elapsed (clock_rate ticks per second)
+                if (current_tick - last_search_tick > clock_rate) then
                     search_length = 0
                     search_buffer = ''
                     needs_full_redraw = .true.
                 end if
             end if
 
-            ! Read key
+            ! Always use fast blocking read - timeouts are too slow
             call read_key(key)
 
             ! Check for alt-g to toggle git mode
@@ -355,17 +357,83 @@ contains
                 cycle
             end if
 
+            ! Fuzzy search in normal mode - handle any printable character
+            ! Exclude A, B, C, D since those are arrow key codes after escape sequence processing
+            if (mode == 'normal') then
+                if ((key >= 'a' .and. key <= 'z') .or. &
+                    ((key >= 'E' .and. key <= 'Z') .or. (key >= '0' .and. key <= '9')) .or. &
+                    key == '_' .or. key == '-' .or. key == '.') then
+                    ! Add to search buffer
+                    if (search_length < 32) then
+                        search_length = search_length + 1
+                        search_buffer(search_length:search_length) = key
+                        call system_clock(last_search_tick)
+
+                        ! DEBUG
+                        open(99, file='/tmp/fuss_debug.log', position='append')
+                        write(99, '(A,A,A,I0)') 'Buffer: "', search_buffer(1:search_length), '" -> jumping to match'
+                        close(99)
+
+                        call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
+
+                        ! DEBUG
+                        open(99, file='/tmp/fuss_debug.log', position='append')
+                        write(99, '(A,I0,A,A)') '  Result: selected=', selected, ' path=', trim(items(selected)%path)
+                        close(99)
+
+                        needs_full_redraw = .true.
+                    end if
+                    cycle  ! Skip case statement
+                else if (key == achar(127) .or. key == achar(8)) then
+                    ! Backspace - remove last character
+                    if (search_length > 0) then
+                        search_length = search_length - 1
+                        call system_clock(last_search_tick)
+                        if (search_length > 0) then
+                            call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
+                        end if
+                        needs_full_redraw = .true.
+                    end if
+                    cycle  ! Skip case statement
+                end if
+            end if
+
             ! Handle input
             select case (key)
             case ('j', 'B')  ! j or down arrow - navigate to next sibling (skip nested items)
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_down(items, n_items, selected)
             case ('k', 'A')  ! k or up arrow - navigate to previous sibling (skip nested items)
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_up(items, n_items, selected)
             case ('D')  ! Left arrow - navigate to parent directory
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_left(items, n_items, selected)
             case ('C')  ! Right arrow - enter directory
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_right(items, n_items, selected, tree_root, hide_dotfiles)
             case (' ')  ! Space bar - toggle expand/collapse
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
                     ! Toggle the expanded state
                     items(selected)%node%is_expanded = .not. items(selected)%node%is_expanded
@@ -618,39 +686,9 @@ contains
                     ! In normal mode: q quits the application
                     running = .false.
                 end if
-            case default  ! Handle fuzzy search in normal mode
-                if (mode == 'normal') then
-                    ! Check if it's a printable letter/number for search
-                    if ((key >= 'a' .and. key <= 'z') .or. (key >= 'A' .and. key <= 'Z') .or. &
-                        (key >= '0' .and. key <= '9') .or. key == '_' .or. key == '-' .or. key == '.') then
-                        ! Add to search buffer
-                        if (search_length < 32) then
-                            search_length = search_length + 1
-                            search_buffer(search_length:search_length) = key
-                            last_search_time = get_wall_time()
-
-                            ! Find first matching item and jump immediately
-                            call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
-
-                            ! Redraw will happen at top of loop
-                            needs_full_redraw = .true.
-                        end if
-                    else if (key == achar(127) .or. key == achar(8)) then
-                        ! Backspace - remove last character
-                        if (search_length > 0) then
-                            search_length = search_length - 1
-                            last_search_time = get_wall_time()
-
-                            ! Re-search with shorter pattern
-                            if (search_length > 0) then
-                                call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
-                            end if
-
-                            ! Redraw will happen at top of loop
-                            needs_full_redraw = .true.
-                        end if
-                    end if
-                end if
+            case default
+                ! Unhandled keys - do nothing
+                continue
             end select
         end do
 
@@ -1474,22 +1512,27 @@ contains
 
     subroutine fuzzy_jump_to_match(items, n_items, pattern, selected)
         ! Jump to first item that fuzzy matches the pattern
+        ! Searches from NEXT position (skips current item to allow cycling)
         type(selectable_item), intent(in) :: items(:)
         integer, intent(in) :: n_items
         character(len=*), intent(in) :: pattern
         integer, intent(inout) :: selected
-        integer :: i
+        integer :: i, start_pos
 
-        ! Search from current position forward
-        do i = selected, n_items
+        ! Start from next item (so repeated searches cycle through matches)
+        start_pos = selected + 1
+        if (start_pos > n_items) start_pos = 1
+
+        ! Search from next position forward
+        do i = start_pos, n_items
             if (fuzzy_match(pattern, items(i)%path)) then
                 selected = i
                 return
             end if
         end do
 
-        ! Wrap around: search from beginning to current position
-        do i = 1, selected - 1
+        ! Wrap around: search from beginning to current position (inclusive)
+        do i = 1, selected
             if (fuzzy_match(pattern, items(i)%path)) then
                 selected = i
                 return
@@ -1542,20 +1585,5 @@ contains
         ! Match succeeds if we found all pattern characters
         matches = (pattern_idx > len_trim(pattern))
     end function fuzzy_match
-
-    function get_wall_time() result(time_seconds)
-        ! Get wall-clock time in seconds (for timeouts)
-        ! Uses system date_and_time which provides millisecond precision
-        real(8) :: time_seconds
-        integer :: values(8)
-
-        call date_and_time(values=values)
-
-        ! Convert to seconds: hours*3600 + minutes*60 + seconds + milliseconds/1000
-        time_seconds = real(values(5), 8) * 3600.0d0 + &
-                      real(values(6), 8) * 60.0d0 + &
-                      real(values(7), 8) + &
-                      real(values(8), 8) / 1000.0d0
-    end function get_wall_time
 
 end program fuss
