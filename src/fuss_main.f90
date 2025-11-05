@@ -179,6 +179,10 @@ contains
         integer :: prev_selected, prev_viewport
         logical :: needs_full_redraw
         character(len=10) :: mode  ! "normal" or "git" mode
+        ! Search state for fuzzy jump
+        character(len=32) :: search_buffer
+        integer :: search_length
+        real(8) :: last_search_time, current_time
         type(tree_node), pointer :: tree_root
 
         ! Initialize tree pointer
@@ -246,6 +250,11 @@ contains
         running = .true.
         mode = 'normal'  ! Start in normal mode
 
+        ! Initialize search state
+        search_buffer = ''
+        search_length = 0
+        last_search_time = 0.0d0
+
         ! Partial redraw optimization: initialize tracking state
         prev_selected = 0  ! Force initial draw
         prev_viewport = 0
@@ -273,19 +282,31 @@ contains
                 ! Full redraw needed: viewport scrolled or forced refresh
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                           search_buffer, search_length)
                 needs_full_redraw = .false.
             else if (selected /= prev_selected) then
                 ! Only selection changed within same viewport - still need full redraw for now
                 ! TODO: Could optimize this with partial line updates in the future
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                           search_buffer, search_length)
             end if
 
             ! Update tracking state
             prev_selected = selected
             prev_viewport = viewport_offset
+
+            ! Check search timeout (1 second)
+            if (search_length > 0) then
+                current_time = get_wall_time()
+                if (current_time - last_search_time > 1.0d0) then
+                    search_length = 0
+                    search_buffer = ''
+                    needs_full_redraw = .true.
+                end if
+            end if
 
             ! Read key
             call read_key(key)
@@ -303,13 +324,14 @@ contains
                 call execute_command_line('stty sane < /dev/tty')
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                           search_buffer, search_length)
                 ! Restore cbreak mode
                 call enable_raw_mode()
                 cycle  ! Skip rest of key handling
             end if
 
-            ! Handle ESC key - exit git mode if active
+            ! Handle ESC key - exit git mode or clear search
             if (key == achar(27)) then
                 if (mode == 'git') then
                     mode = 'normal'
@@ -317,9 +339,16 @@ contains
                     call execute_command_line('stty sane < /dev/tty')
                     call clear_screen()
                     call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                               repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                                               repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                               search_buffer, search_length)
                     ! Restore cbreak mode
                     call enable_raw_mode()
+                    cycle
+                else if (search_length > 0) then
+                    ! Clear search in normal mode
+                    search_length = 0
+                    search_buffer = ''
+                    needs_full_redraw = .true.
                     cycle
                 end if
                 ! In normal mode, ESC does nothing for now
@@ -588,6 +617,39 @@ contains
                 else
                     ! In normal mode: q quits the application
                     running = .false.
+                end if
+            case default  ! Handle fuzzy search in normal mode
+                if (mode == 'normal') then
+                    ! Check if it's a printable letter/number for search
+                    if ((key >= 'a' .and. key <= 'z') .or. (key >= 'A' .and. key <= 'Z') .or. &
+                        (key >= '0' .and. key <= '9') .or. key == '_' .or. key == '-' .or. key == '.') then
+                        ! Add to search buffer
+                        if (search_length < 32) then
+                            search_length = search_length + 1
+                            search_buffer(search_length:search_length) = key
+                            last_search_time = get_wall_time()
+
+                            ! Find first matching item and jump immediately
+                            call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
+
+                            ! Redraw will happen at top of loop
+                            needs_full_redraw = .true.
+                        end if
+                    else if (key == achar(127) .or. key == achar(8)) then
+                        ! Backspace - remove last character
+                        if (search_length > 0) then
+                            search_length = search_length - 1
+                            last_search_time = get_wall_time()
+
+                            ! Re-search with shorter pattern
+                            if (search_length > 0) then
+                                call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
+                            end if
+
+                            ! Redraw will happen at top of loop
+                            needs_full_redraw = .true.
+                        end if
+                    end if
                 end if
             end select
         end do
@@ -1409,5 +1471,91 @@ contains
             if (present(running)) running = .false.
         end if
     end subroutine refresh_and_rebuild
+
+    subroutine fuzzy_jump_to_match(items, n_items, pattern, selected)
+        ! Jump to first item that fuzzy matches the pattern
+        type(selectable_item), intent(in) :: items(:)
+        integer, intent(in) :: n_items
+        character(len=*), intent(in) :: pattern
+        integer, intent(inout) :: selected
+        integer :: i
+
+        ! Search from current position forward
+        do i = selected, n_items
+            if (fuzzy_match(pattern, items(i)%path)) then
+                selected = i
+                return
+            end if
+        end do
+
+        ! Wrap around: search from beginning to current position
+        do i = 1, selected - 1
+            if (fuzzy_match(pattern, items(i)%path)) then
+                selected = i
+                return
+            end if
+        end do
+
+        ! No match found - stay at current position
+    end subroutine fuzzy_jump_to_match
+
+    function fuzzy_match(pattern, text) result(matches)
+        ! Fuzzy matching like fzf: pattern chars must appear in order in text
+        ! Case-insensitive matching
+        ! Returns .true. if all pattern chars found in sequence
+        character(len=*), intent(in) :: pattern, text
+        logical :: matches
+        integer :: pattern_idx, text_idx
+        character(len=1) :: pattern_char, text_char
+
+        matches = .false.
+
+        ! Empty pattern matches everything
+        if (len_trim(pattern) == 0) then
+            matches = .true.
+            return
+        end if
+
+        pattern_idx = 1
+
+        ! Scan through text looking for each pattern character in order
+        do text_idx = 1, len_trim(text)
+            if (pattern_idx > len_trim(pattern)) exit
+
+            ! Case-insensitive comparison
+            pattern_char = pattern(pattern_idx:pattern_idx)
+            text_char = text(text_idx:text_idx)
+
+            ! Convert to lowercase for comparison
+            if (pattern_char >= 'A' .and. pattern_char <= 'Z') then
+                pattern_char = achar(ichar(pattern_char) + 32)
+            end if
+            if (text_char >= 'A' .and. text_char <= 'Z') then
+                text_char = achar(ichar(text_char) + 32)
+            end if
+
+            if (pattern_char == text_char) then
+                pattern_idx = pattern_idx + 1
+            end if
+        end do
+
+        ! Match succeeds if we found all pattern characters
+        matches = (pattern_idx > len_trim(pattern))
+    end function fuzzy_match
+
+    function get_wall_time() result(time_seconds)
+        ! Get wall-clock time in seconds (for timeouts)
+        ! Uses system date_and_time which provides millisecond precision
+        real(8) :: time_seconds
+        integer :: values(8)
+
+        call date_and_time(values=values)
+
+        ! Convert to seconds: hours*3600 + minutes*60 + seconds + milliseconds/1000
+        time_seconds = real(values(5), 8) * 3600.0d0 + &
+                      real(values(6), 8) * 60.0d0 + &
+                      real(values(7), 8) + &
+                      real(values(8), 8) / 1000.0d0
+    end function get_wall_time
 
 end program fuss

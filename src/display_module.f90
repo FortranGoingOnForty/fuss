@@ -129,12 +129,13 @@ contains
     end subroutine print_tree_node
 
     subroutine draw_interactive_tree(tree_root, items, n_items, selected, &
-                                     repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                                     repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                     search_buffer, search_length)
         type(tree_node), pointer, intent(in) :: tree_root
         integer, intent(in) :: n_items, selected
         type(selectable_item), intent(in) :: items(:)
-        character(len=*), intent(in) :: repo_name, branch_name, mode
-        integer, intent(in) :: viewport_offset, visible_items, top_padding
+        character(len=*), intent(in) :: repo_name, branch_name, mode, search_buffer
+        integer, intent(in) :: viewport_offset, visible_items, top_padding, search_length
         integer :: item_idx, viewport_end, i
         character(len=512) :: status_line
 
