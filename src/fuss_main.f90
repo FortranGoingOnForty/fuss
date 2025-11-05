@@ -313,6 +313,22 @@ contains
             ! Always use fast blocking read - timeouts are too slow
             call read_key(key)
 
+            ! DEBUG: Log all control characters to see what we're getting
+            if (ichar(key) < 32) then
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A,I0)') 'Control char received: ', ichar(key)
+                close(99)
+            end if
+
+            ! Check for ctrl-q to quit (priority over everything)
+            if (key == achar(17)) then
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A)') 'CTRL-Q detected - quitting!'
+                close(99)
+                running = .false.
+                cycle
+            end if
+
             ! Check for alt-g to toggle git mode
             ! alt-g is encoded as achar(1 + ichar('g') - ichar('a')) = achar(7)
             if (key == achar(7)) then
@@ -390,11 +406,6 @@ contains
                         close(99)
 
                         call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
-
-                        ! DEBUG
-                        open(99, file='/tmp/fuss_debug.log', position='append')
-                        write(99, '(A,I0,A,A)') '  Result: selected=', selected, ' path=', trim(items(selected)%path)
-                        close(99)
 
                         needs_full_redraw = .true.
                     end if
@@ -692,17 +703,14 @@ contains
                 visible_items = term_height - top_padding - 6
                 if (visible_items < 3) visible_items = 3
                 if (visible_items > n_items) visible_items = n_items
-            case ('q', 'Q')  ! Quit or exit git mode
+            case ('q', 'Q')  ! Exit git mode
                 if (mode == 'git') then
                     ! In git mode: q exits to normal mode
                     mode = 'normal'
                     needs_full_redraw = .true.
-                else
-                    ! In normal mode: q quits the application
-                    running = .false.
                 end if
-            case (achar(17))  ! Ctrl-Q - force quit from any mode
-                running = .false.
+                ! Note: In normal mode, 'q' is used for fuzzy search
+                ! Use ctrl-q to quit from normal mode
             case default
                 ! Unhandled keys - do nothing
                 continue
@@ -1528,102 +1536,190 @@ contains
     end subroutine refresh_and_rebuild
 
     subroutine fuzzy_jump_to_match(items, n_items, pattern, selected)
-        ! Jump to first item that fuzzy matches the pattern
-        ! Prioritizes matching item names (basename) over full paths
-        ! Searches from NEXT position (skips current item to allow cycling)
+        ! Jump to BEST matching item using fzf-style scoring
+        ! Two-pass approach: basename matches first, then path matches
+        ! This ensures "src" matches "src/" directory before "src/file.f90"
         type(selectable_item), intent(in) :: items(:)
         integer, intent(in) :: n_items
         character(len=*), intent(in) :: pattern
         integer, intent(inout) :: selected
-        integer :: i, start_pos
+        integer :: i, best_idx, best_score, score, current_score
 
-        ! Start from next item (so repeated searches cycle through matches)
-        start_pos = selected + 1
-        if (start_pos > n_items) start_pos = 1
+        best_idx = selected  ! Stay at current if no matches
+        best_score = 0
 
-        ! PASS 1: Try to match item NAME first (e.g., "src" matches "src/" before "src/file.f90")
-        ! Search from next position forward
-        do i = start_pos, n_items
+        ! Check current item's basename first - if it's a perfect match, stay on it!
+        if (associated(items(selected)%node)) then
+            current_score = fuzzy_match_score(pattern, items(selected)%node%name)
+            if (current_score >= 10000) then  ! Exact match - stay here!
+                ! DEBUG
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A,I0,A,A,A,I0,A)') '  EXACT MATCH (current): item=', selected, ' path=', &
+                                              trim(items(selected)%path), ' score=', current_score, ' (basename)'
+                close(99)
+                return
+            end if
+            best_score = current_score
+            best_idx = selected
+        end if
+
+        ! PASS 1: Search for basename matches (directories, file names)
+        do i = 1, n_items
+            if (i == selected) cycle  ! Already checked current above
+
             if (associated(items(i)%node)) then
-                if (fuzzy_match(pattern, items(i)%node%name)) then
-                    selected = i
-                    return
+                score = fuzzy_match_score(pattern, items(i)%node%name)
+                if (score > best_score) then
+                    best_score = score
+                    best_idx = i
                 end if
             end if
         end do
 
-        ! Wrap around: search from beginning to current position (inclusive)
-        do i = 1, selected
-            if (associated(items(i)%node)) then
-                if (fuzzy_match(pattern, items(i)%node%name)) then
-                    selected = i
-                    return
-                end if
-            end if
-        end do
-
-        ! PASS 2: If no name match, try matching full path
-        ! Search from next position forward
-        do i = start_pos, n_items
-            if (fuzzy_match(pattern, items(i)%path)) then
-                selected = i
-                return
-            end if
-        end do
-
-        ! Wrap around: search from beginning to current position (inclusive)
-        do i = 1, selected
-            if (fuzzy_match(pattern, items(i)%path)) then
-                selected = i
-                return
-            end if
-        end do
-
-        ! No match found - stay at current position
-    end subroutine fuzzy_jump_to_match
-
-    function fuzzy_match(pattern, text) result(matches)
-        ! Fuzzy matching like fzf: pattern chars must appear in order in text
-        ! Case-insensitive matching
-        ! Returns .true. if all pattern chars found in sequence
-        character(len=*), intent(in) :: pattern, text
-        logical :: matches
-        integer :: pattern_idx, text_idx
-        character(len=1) :: pattern_char, text_char
-
-        matches = .false.
-
-        ! Empty pattern matches everything
-        if (len_trim(pattern) == 0) then
-            matches = .true.
+        ! If we found a good basename match, use it
+        if (best_score >= 5000) then  ! Prefix or exact match
+            selected = best_idx
+            ! DEBUG
+            open(99, file='/tmp/fuss_debug.log', position='append')
+            write(99, '(A,I0,A,A,A,I0,A)') '  BASENAME MATCH: item=', best_idx, ' path=', &
+                                          trim(items(best_idx)%path), ' score=', best_score, ' (basename)'
+            close(99)
             return
         end if
 
-        pattern_idx = 1
+        ! PASS 2: Search full paths if no good basename match
+        do i = 1, n_items
+            if (i == selected) cycle
 
-        ! Scan through text looking for each pattern character in order
-        do text_idx = 1, len_trim(text)
-            if (pattern_idx > len_trim(pattern)) exit
-
-            ! Case-insensitive comparison
-            pattern_char = pattern(pattern_idx:pattern_idx)
-            text_char = text(text_idx:text_idx)
-
-            ! Convert to lowercase for comparison
-            if (pattern_char >= 'A' .and. pattern_char <= 'Z') then
-                pattern_char = achar(ichar(pattern_char) + 32)
-            end if
-            if (text_char >= 'A' .and. text_char <= 'Z') then
-                text_char = achar(ichar(text_char) + 32)
-            end if
-
-            if (pattern_char == text_char) then
-                pattern_idx = pattern_idx + 1
+            score = fuzzy_match_score(pattern, items(i)%path)
+            if (score > best_score) then
+                best_score = score
+                best_idx = i
             end if
         end do
 
-        ! Match succeeds if we found all pattern characters
-        matches = (pattern_idx > len_trim(pattern))
-    end function fuzzy_match
+        ! Jump to best match if any was found
+        if (best_score > 0) then
+            selected = best_idx
+            ! DEBUG
+            open(99, file='/tmp/fuss_debug.log', position='append')
+            write(99, '(A,I0,A,A,A,I0,A)') '  PATH MATCH: item=', best_idx, ' path=', &
+                                          trim(items(best_idx)%path), ' score=', best_score, ' (fullpath)'
+            close(99)
+        end if
+    end subroutine fuzzy_jump_to_match
+
+    function fuzzy_match_score(pattern, text) result(score)
+        ! Fuzzy matching with fzf-style scoring
+        ! Returns a score (higher is better), 0 means no match
+        character(len=*), intent(in) :: pattern, text
+        integer :: score
+        integer :: pattern_idx, text_idx, match_start, consecutive_bonus
+        character(len=256) :: pattern_lower, text_lower
+        logical :: is_consecutive
+
+        score = 0
+
+        ! Empty pattern matches everything with score 1
+        if (len_trim(pattern) == 0) then
+            score = 1
+            return
+        end if
+
+        ! Convert to lowercase once
+        pattern_lower = pattern
+        text_lower = text
+        call to_lowercase(pattern_lower)
+        call to_lowercase(text_lower)
+
+        ! Check for exact match first (highest score)
+        if (trim(pattern_lower) == trim(text_lower)) then
+            score = 10000
+            return
+        end if
+
+        ! Check for prefix match (very high score)
+        if (len_trim(pattern_lower) <= len_trim(text_lower)) then
+            if (text_lower(1:len_trim(pattern_lower)) == trim(pattern_lower)) then
+                score = 5000
+                return
+            end if
+        end if
+
+        ! Fuzzy match with scoring
+        pattern_idx = 1
+        consecutive_bonus = 0
+        is_consecutive = .false.
+        match_start = -1
+
+        do text_idx = 1, len_trim(text_lower)
+            if (pattern_idx > len_trim(pattern_lower)) exit
+
+            if (pattern_lower(pattern_idx:pattern_idx) == text_lower(text_idx:text_idx)) then
+                if (match_start == -1) match_start = text_idx
+
+                ! Base score for each matched character
+                score = score + 100
+
+                ! Bonus for consecutive characters
+                if (is_consecutive) then
+                    consecutive_bonus = consecutive_bonus + 1
+                    score = score + consecutive_bonus * 50
+                else
+                    consecutive_bonus = 1
+                    is_consecutive = .true.
+                end if
+
+                ! Bonus for matching at start of text
+                if (text_idx == 1) then
+                    score = score + 200
+                end if
+
+                ! Bonus for matching after separator (word boundary)
+                if (text_idx > 1) then
+                    if (text_lower(text_idx-1:text_idx-1) == '/' .or. &
+                        text_lower(text_idx-1:text_idx-1) == '_' .or. &
+                        text_lower(text_idx-1:text_idx-1) == '-' .or. &
+                        text_lower(text_idx-1:text_idx-1) == '.') then
+                        score = score + 150
+                    end if
+                end if
+
+                pattern_idx = pattern_idx + 1
+            else
+                ! Reset consecutive bonus when characters don't match
+                is_consecutive = .false.
+                consecutive_bonus = 0
+                ! Small penalty for gaps
+                if (match_start > 0) then
+                    score = score - 1
+                end if
+            end if
+        end do
+
+        ! No match if we didn't find all pattern characters
+        if (pattern_idx <= len_trim(pattern_lower)) then
+            score = 0
+            return
+        end if
+
+        ! Bonus for shorter strings (prefer concise matches)
+        score = score - len_trim(text_lower)
+
+    end function fuzzy_match_score
+
+    subroutine to_lowercase(str)
+        ! Convert string to lowercase in-place
+        character(len=*), intent(inout) :: str
+        integer :: i
+        character(len=1) :: c
+
+        do i = 1, len_trim(str)
+            c = str(i:i)
+            if (c >= 'A' .and. c <= 'Z') then
+                str(i:i) = achar(ichar(c) + 32)
+            end if
+        end do
+    end subroutine to_lowercase
 
 end program fuss

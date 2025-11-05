@@ -183,7 +183,7 @@ contains
                          achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                          achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
                          achar(27) // '[34m↓' // achar(27) // '[0m=incoming' // achar(27) // '[0m'
-            print '(A)', achar(27) // '[33mKeys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | G:merge | O:reset | I:rebase | f:fetch | d:diff | c:view | w:blame | h:history | L:reflog | y:cherry-pick | v:revert | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s:status | q:exit-mode | ESC:exit-mode' // achar(27) // '[0m'
+            print '(A)', achar(27) // '[33mKeys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | G:merge | O:reset | I:rebase | f:fetch | d:diff | c:view | w:blame | h:history | L:reflog | y:cherry-pick | v:revert | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s:status | q:exit-mode | ESC:exit-mode | ctrl-q:quit' // achar(27) // '[0m'
         else
             ! Normal mode help
             print '(A)', 'Legend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
