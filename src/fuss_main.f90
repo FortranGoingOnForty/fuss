@@ -24,6 +24,9 @@ program fuss
         call build_and_display_tree(show_all)
     end if
 
+    ! Ensure terminal is always restored (safety cleanup)
+    call cleanup_terminal()
+
 contains
 
     subroutine parse_arguments(show_all, interactive)
@@ -154,6 +157,13 @@ contains
         end if
     end subroutine build_and_display_tree
 
+    subroutine cleanup_terminal()
+        ! Emergency cleanup - restores terminal to normal state
+        ! Call this before any exit or when calling external programs
+        call disable_raw_mode()
+        call exit_alternate_screen()
+    end subroutine cleanup_terminal
+
     subroutine interactive_mode(show_all)
         logical, intent(in) :: show_all
         type(file_entry), allocatable :: files(:)
@@ -190,14 +200,12 @@ contains
         ! Initialize hide_dotfiles before first use
         hide_dotfiles = .false.
 
-        ! Get files
+        ! Get files and mark incoming changes
         if (show_all) then
             call get_all_files(files, n_files)
         else
             call get_dirty_files(files, n_files)
         end if
-
-        ! Mark files with incoming changes
         call mark_incoming_changes(files, n_files)
 
         if (n_files == 0) then
@@ -226,6 +234,9 @@ contains
         selected = 1
         viewport_offset = 1
         running = .true.
+
+        ! Enter alternate screen buffer (preserves terminal content)
+        call enter_alternate_screen()
 
         ! Enable raw terminal mode
         call enable_raw_mode()
@@ -273,128 +284,63 @@ contains
                 if (.not. items(selected)%is_file) then
                     call git_stage_directory(items(selected)%path)
                     ! Refresh files after staging directory
-                    if (show_all) then
-                        call get_all_files(files, n_files)
-                    else
-                        call get_dirty_files(files, n_files)
-                    end if
-                    call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                    if (selected > n_items .and. n_items > 0) selected = n_items
-                    if (n_items == 0) running = .false.
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true.)
                 ! Otherwise it's a file - stage individual file
                 else if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call git_add_file(items(selected)%path)
                     ! Refresh files after git add
-                    if (show_all) then
-                        call get_all_files(files, n_files)
-                    else
-                        call get_dirty_files(files, n_files)
-                    end if
-                    call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                    if (selected > n_items .and. n_items > 0) selected = n_items
-                    if (n_items == 0) running = .false.
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true.)
                 end if
             case ('u')  ! Unstage file (lowercase)
                 if (items(selected)%is_file .and. items(selected)%is_staged) then
                     call git_unstage_file(items(selected)%path)
                     ! Refresh files after git unstage
-                    if (show_all) then
-                        call get_all_files(files, n_files)
-                    else
-                        call get_dirty_files(files, n_files)
-                    end if
-                    call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                    if (selected > n_items .and. n_items > 0) selected = n_items
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running)
                 end if
             case ('S')  ! Stage all (Shift+S to avoid conflict with up arrow 'A')
                 call git_stage_all()
                 ! Refresh files after staging all
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
-                if (n_items == 0) running = .false.
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running, exit_if_empty=.true.)
             case ('U')  ! Unstage all (Shift+U)
                 call git_unstage_all()
                 ! Refresh files after unstaging all
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('m')  ! Commit (lowercase)
                 call commit_prompt()
                 ! Refresh files after commit
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('M')  ! Amend last commit (Shift+m)
                 call amend_commit_prompt()
                 ! Refresh files after amend commit
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('s')  ! Show git status (lowercase)
                 call show_status_view()
             case ('p')  ! Push (lowercase)
                 call push_prompt()
                 ! Refresh files after push
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('t')  ! Tag (lowercase)
                 call tag_prompt()
             case ('b')  ! Switch branch
                 call branch_switch_prompt()
                 ! Refresh files after branch switch
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
-                if (n_items == 0) running = .false.
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running, exit_if_empty=.true.)
                 ! Update branch name display
                 call get_repo_info(repo_name, branch_name)
             case ('n')  ! Create new branch
                 call branch_create_prompt()
                 ! Refresh files after branch creation
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
-                if (n_items == 0) running = .false.
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running, exit_if_empty=.true.)
                 ! Update branch name display
                 call get_repo_info(repo_name, branch_name)
             case ('R')  ! Delete branch (Shift+r, since 'r' is used for delete file)
@@ -403,16 +349,8 @@ contains
             case ('f')  ! Git fetch
                 call git_fetch()
                 ! Refresh files after fetch and include files with incoming changes
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                    call mark_incoming_changes(files, n_files)
-                else
-                    ! In non-all mode, add files that only have incoming changes
-                    call get_dirty_files(files, n_files)
-                    call add_incoming_files(files, n_files)
-                end if
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running, include_incoming=.true.)
             case ('d')  ! Git diff with less
                 if (items(selected)%is_file) then
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
@@ -429,89 +367,43 @@ contains
                 if (items(selected)%is_file) then
                     call delete_prompt(items(selected)%path, items(selected)%is_untracked)
                     ! Refresh files after delete
-                    if (show_all) then
-                        call get_all_files(files, n_files)
-                    else
-                        call get_dirty_files(files, n_files)
-                    end if
-                    call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                    if (selected > n_items .and. n_items > 0) selected = n_items
-                    if (n_items == 0) running = .false.
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true.)
                 end if
             case ('x', 'X')  ! Discard changes
                 if (items(selected)%is_file .and. (items(selected)%is_staged .or. items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call discard_prompt(items(selected)%path, items(selected)%is_staged, items(selected)%is_untracked)
                     ! Refresh files after discard
-                    if (show_all) then
-                        call get_all_files(files, n_files)
-                    else
-                        call get_dirty_files(files, n_files)
-                    end if
-                    call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                    if (selected > n_items .and. n_items > 0) selected = n_items
-                    if (n_items == 0) running = .false.
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true.)
                 end if
             case ('l')  ! Git pull
                 call git_pull()
                 ! Refresh files after pull (incoming indicators will automatically clear)
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                    call mark_incoming_changes(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                    call add_incoming_files(files, n_files)
-                end if
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running, include_incoming=.true.)
                 ! Note: After successful pull, git diff will show no upstream differences
                 ! so has_incoming will be .false. for all files automatically
             case ('z')  ! Stash push (save changes)
                 call stash_push_prompt()
                 ! Refresh files after stash
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
-                if (n_items == 0) running = .false.
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running, exit_if_empty=.true.)
             case ('Z')  ! Stash pop/apply (restore changes)
                 call stash_pop_apply_prompt()
                 ! Refresh files after stash pop/apply
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('y')  ! Cherry-pick (yank commit)
                 call cherry_pick_prompt()
                 ! Refresh files after cherry-pick
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('v')  ! Revert commit
                 call revert_commit_prompt()
                 ! Refresh files after revert
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('h')  ! Show commit history
                 call history_browser_prompt()
                 ! No refresh needed - read-only
@@ -521,38 +413,20 @@ contains
             case ('G')  ! Merge branch (Shift+g)
                 call merge_branch_prompt()
                 ! Refresh files after merge
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
                 ! Update branch name display in case we merged
                 call get_repo_info(repo_name, branch_name)
             case ('O')  ! Reset (Shift+o - "Oh no, undo!")
                 call reset_prompt()
                 ! Refresh files after reset
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('I')  ! Interactive rebase (Shift+i)
                 call rebase_prompt()
                 ! Refresh files after rebase
-                if (show_all) then
-                    call get_all_files(files, n_files)
-                else
-                    call get_dirty_files(files, n_files)
-                end if
-                call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
-                if (selected > n_items .and. n_items > 0) selected = n_items
+                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                        hide_dotfiles, selected, running)
             case ('.')  ! Toggle hiding dotfiles and gitignored files
                 hide_dotfiles = .not. hide_dotfiles
                 ! Rebuild item list with new filter
@@ -569,15 +443,15 @@ contains
             end select
         end do
 
-        ! Restore terminal
-        call disable_raw_mode()
+        ! Restore terminal to normal state
+        call cleanup_terminal()
 
         ! Free the tree
         if (associated(tree_root)) then
             call free_tree(tree_root)
         end if
 
-        ! Final display
+        ! Final display (now in normal terminal buffer)
         call clear_screen()
         call build_and_display_tree(show_all)
     end subroutine interactive_mode
@@ -1335,5 +1209,52 @@ contains
         ! Wait for keypress to continue
         call read_key(key)
     end subroutine branch_delete_prompt
+
+    subroutine refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                    hide_dotfiles, selected, running, exit_if_empty, include_incoming)
+        ! Centralized helper to refresh file list and rebuild tree
+        ! Consolidates the pattern repeated 20+ times in the codebase
+        logical, intent(in) :: show_all, hide_dotfiles
+        type(file_entry), allocatable, intent(inout) :: files(:)
+        integer, intent(inout) :: n_files, n_items, selected
+        type(tree_node), pointer, intent(inout) :: tree_root
+        type(selectable_item), allocatable, intent(inout) :: items(:)
+        logical, intent(inout), optional :: running
+        logical, intent(in), optional :: exit_if_empty, include_incoming
+
+        logical :: do_exit_if_empty, do_include_incoming
+
+        ! Handle optional parameters
+        do_exit_if_empty = .false.
+        if (present(exit_if_empty)) do_exit_if_empty = exit_if_empty
+
+        do_include_incoming = .false.
+        if (present(include_incoming)) do_include_incoming = include_incoming
+
+        ! Get files based on mode
+        if (show_all) then
+            call get_all_files(files, n_files)
+            call mark_incoming_changes(files, n_files)
+        else
+            call get_dirty_files(files, n_files)
+            if (do_include_incoming) then
+                ! For fetch/pull: also include files with only incoming changes
+                call add_incoming_files(files, n_files)
+            else
+                call mark_incoming_changes(files, n_files)
+            end if
+        end if
+
+        ! Rebuild tree and flatten to items
+        call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
+
+        ! Adjust selection if needed
+        if (selected > n_items .and. n_items > 0) selected = n_items
+
+        ! Exit if no items and exit_if_empty is set
+        if (do_exit_if_empty .and. n_items == 0) then
+            if (present(running)) running = .false.
+        end if
+    end subroutine refresh_and_rebuild
 
 end program fuss

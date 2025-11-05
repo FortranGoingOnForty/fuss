@@ -3,9 +3,22 @@ module terminal_module
 
 contains
 
+    subroutine enter_alternate_screen()
+        ! Switch to alternate screen buffer (like vim, less, htop)
+        ! This preserves the main terminal content
+        print '(A)', achar(27) // '[?1049h'
+    end subroutine enter_alternate_screen
+
+    subroutine exit_alternate_screen()
+        ! Return to main screen buffer
+        ! Restores terminal to state before enter_alternate_screen()
+        print '(A)', achar(27) // '[?1049l'
+    end subroutine exit_alternate_screen
+
     subroutine clear_screen()
         ! ANSI escape code to clear screen and move cursor to top
-        print '(A)', achar(27) // '[2J' // achar(27) // '[H'
+        ! In alternate screen buffer, we just need to home cursor and clear
+        print '(A)', achar(27) // '[H' // achar(27) // '[2J'
     end subroutine clear_screen
 
     subroutine enable_raw_mode()
