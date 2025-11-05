@@ -1,5 +1,5 @@
 Name:           fuss
-Version:        1.2.5
+Version:        1.2.6
 Release:        1%{?dist}
 Summary:        A tree utility for dirty git files, written in modern Fortran
 
@@ -12,6 +12,7 @@ BuildRequires:  gfortran >= 4.8
 BuildRequires:  make
 Requires:       glibc
 Requires:       git
+Requires:       fzf
 
 %description
 FUSS is a tree utility for dirty git files, written in modern Fortran.
@@ -46,6 +47,9 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Tue Nov 05 2024 mfw <espadon@outlook.com> - 1.2.6-1
+- Updates and improvements
+
 * Tue Nov 05 2024 mfw <espadon@outlook.com> - 1.2.5-1
 - Updates and improvements
 
