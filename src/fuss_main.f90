@@ -283,16 +283,14 @@ contains
                 ! Full redraw needed: viewport scrolled or forced refresh
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                           search_buffer, search_length)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
                 needs_full_redraw = .false.
             else if (selected /= prev_selected) then
                 ! Only selection changed within same viewport - still need full redraw for now
                 ! TODO: Could optimize this with partial line updates in the future
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                           search_buffer, search_length)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
             end if
 
             ! Update tracking state
@@ -342,8 +340,7 @@ contains
                 call execute_command_line('stty sane < /dev/tty')
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                           search_buffer, search_length)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
                 ! Restore cbreak mode
                 call enable_raw_mode()
                 cycle  ! Skip rest of key handling
@@ -375,8 +372,7 @@ contains
                     call execute_command_line('stty sane < /dev/tty')
                     call clear_screen()
                     call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                               repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
-                                               search_buffer, search_length)
+                                               repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
                     ! Restore cbreak mode
                     call enable_raw_mode()
                     cycle
