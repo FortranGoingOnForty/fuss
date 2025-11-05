@@ -37,13 +37,75 @@ contains
 
         do i = 1, nargs
             call get_command_argument(i, arg)
-            if (trim(arg) == '--all' .or. trim(arg) == '-a') then
+            if (trim(arg) == '--help' .or. trim(arg) == '-h') then
+                call print_help()
+                stop
+            else if (trim(arg) == '--all' .or. trim(arg) == '-a') then
                 show_all = .true.
             else if (trim(arg) == '-i' .or. trim(arg) == '--interactive') then
                 interactive = .true.
             end if
         end do
     end subroutine parse_arguments
+
+    subroutine print_help()
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mfuss' // achar(27) // '[0m - Fortran Utility for Simple Staging'
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mUSAGE:' // achar(27) // '[0m'
+        print '(A)', '    fuss [OPTIONS]'
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mOPTIONS:' // achar(27) // '[0m'
+        print '(A)', '    -h, --help          Show this help message'
+        print '(A)', '    -i, --interactive   Launch interactive tree view (default mode)'
+        print '(A)', '    -a, --all           Show all files (not just dirty files)'
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mDESCRIPTION:' // achar(27) // '[0m'
+        print '(A)', '    fuss is a git staging utility with an interactive tree interface.'
+        print '(A)', '    Navigate with j/k or arrow keys, stage with ''a'', unstage with ''u''.'
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mINTERACTIVE MODE KEYS:' // achar(27) // '[0m'
+        print '(A)', '    Navigation:'
+        print '(A)', '        j/k or ↑/↓      Navigate files (siblings only)'
+        print '(A)', '        ←/→             Navigate tree (parent/child)'
+        print '(A)', '        space           Toggle directory expand/collapse'
+        print '(A)', ''
+        print '(A)', '    Staging:'
+        print '(A)', '        a               Stage file or directory'
+        print '(A)', '        u               Unstage file'
+        print '(A)', '        S               Stage all files'
+        print '(A)', '        U               Unstage all files'
+        print '(A)', ''
+        print '(A)', '    Git Operations:'
+        print '(A)', '        m               Commit staged changes'
+        print '(A)', '        M               Amend last commit'
+        print '(A)', '        p               Push to remote'
+        print '(A)', '        l               Pull from remote'
+        print '(A)', '        f               Fetch from remote'
+        print '(A)', '        d               Show diff for file'
+        print '(A)', '        x               Discard changes'
+        print '(A)', ''
+        print '(A)', '    Branches & Stash:'
+        print '(A)', '        b               Switch branch'
+        print '(A)', '        n               Create new branch'
+        print '(A)', '        R               Delete branch'
+        print '(A)', '        z               Stash changes'
+        print '(A)', '        Z               Unstash/pop changes'
+        print '(A)', ''
+        print '(A)', '    Other:'
+        print '(A)', '        t               Create/push tag'
+        print '(A)', '        r               Delete file'
+        print '(A)', '        s               Show git status'
+        print '(A)', '        .               Toggle hide dotfiles/gitignored'
+        print '(A)', '        q               Quit'
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mEXAMPLES:' // achar(27) // '[0m'
+        print '(A)', '    fuss                 Launch interactive mode (dirty files only)'
+        print '(A)', '    fuss -a              Launch interactive mode showing all files'
+        print '(A)', '    fuss -i              Explicitly launch interactive mode'
+        print '(A)', '    fuss --all           Show all tracked files in tree view'
+        print '(A)', ''
+    end subroutine print_help
 
     subroutine get_current_dir(path)
         character(len=:), allocatable, intent(out) :: path
@@ -90,7 +152,7 @@ contains
         type(selectable_item), allocatable :: items(:)
         integer :: n_files, n_items, selected, i, status
         character(len=1) :: key
-        logical :: running
+        logical :: running, hide_dotfiles
         character(len=256) :: repo_name, branch_name, term_program
         integer :: term_height, viewport_offset, visible_items, top_padding
         type(tree_node), pointer :: tree_root
@@ -117,6 +179,9 @@ contains
         ! DEBUG: Show terminal height
         ! print '(A,I0)', 'DEBUG: Terminal height detected: ', term_height
 
+        ! Initialize hide_dotfiles before first use
+        hide_dotfiles = .false.
+
         ! Get files
         if (show_all) then
             call get_all_files(files, n_files)
@@ -133,7 +198,7 @@ contains
         end if
 
         ! Build flat list of items for navigation
-        call build_item_list(files, n_files, items, n_items, tree_root)
+        call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
 
         ! Calculate visible items accurately
         ! Fixed UI elements that take screen space:
@@ -185,13 +250,13 @@ contains
             case ('D')  ! Left arrow - navigate to parent directory
                 call navigate_left(items, n_items, selected, tree_root)
             case ('C')  ! Right arrow - enter directory
-                call navigate_right(items, n_items, selected, tree_root)
+                call navigate_right(items, n_items, selected, tree_root, hide_dotfiles)
             case (' ')  ! Space bar - toggle expand/collapse
                 if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
                     ! Toggle the expanded state
                     items(selected)%node%is_expanded = .not. items(selected)%node%is_expanded
                     ! Rebuild item list to reflect change
-                    call rebuild_item_list_from_tree(tree_root, items, n_items)
+                    call rebuild_item_list_from_tree(tree_root, items, n_items, hide_dotfiles)
                     ! Adjust selection if needed
                     if (selected > n_items .and. n_items > 0) selected = n_items
                 end if
@@ -206,7 +271,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root)
+                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 ! Otherwise it's a file - stage individual file
@@ -219,7 +284,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root)
+                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
@@ -233,7 +298,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root)
+                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                 end if
             case ('S')  ! Stage all (Shift+S to avoid conflict with up arrow 'A')
@@ -245,7 +310,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 if (n_items == 0) running = .false.
             case ('U')  ! Unstage all (Shift+U)
@@ -257,7 +322,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('m')  ! Commit (lowercase)
                 call commit_prompt()
@@ -268,7 +333,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('M')  ! Amend last commit (Shift+m)
                 call amend_commit_prompt()
@@ -279,7 +344,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('s')  ! Show git status (lowercase)
                 call show_status_view()
@@ -292,7 +357,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('t')  ! Tag (lowercase)
                 call tag_prompt()
@@ -305,7 +370,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 if (n_items == 0) running = .false.
                 ! Update branch name display
@@ -319,7 +384,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 if (n_items == 0) running = .false.
                 ! Update branch name display
@@ -338,7 +403,7 @@ contains
                     call get_dirty_files(files, n_files)
                     call add_incoming_files(files, n_files)
                 end if
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
             case ('d')  ! Git diff with less
                 if (items(selected)%is_file) then
@@ -354,7 +419,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root)
+                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
@@ -368,7 +433,7 @@ contains
                         call get_dirty_files(files, n_files)
                     end if
                     call mark_incoming_changes(files, n_files)
-                    call build_item_list(files, n_files, items, n_items, tree_root)
+                    call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                     if (selected > n_items .and. n_items > 0) selected = n_items
                     if (n_items == 0) running = .false.
                 end if
@@ -382,7 +447,7 @@ contains
                     call get_dirty_files(files, n_files)
                     call add_incoming_files(files, n_files)
                 end if
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 ! Note: After successful pull, git diff will show no upstream differences
                 ! so has_incoming will be .false. for all files automatically
@@ -395,7 +460,7 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 if (n_items == 0) running = .false.
             case ('Z')  ! Stash pop/apply (restore changes)
@@ -407,8 +472,19 @@ contains
                     call get_dirty_files(files, n_files)
                 end if
                 call mark_incoming_changes(files, n_files)
-                call build_item_list(files, n_files, items, n_items, tree_root)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('.')  ! Toggle hiding dotfiles and gitignored files
+                hide_dotfiles = .not. hide_dotfiles
+                ! Rebuild item list with new filter
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
+                ! Adjust selection and visible_items for new item count
+                if (selected > n_items .and. n_items > 0) selected = n_items
+                if (n_items > 0 .and. selected < 1) selected = 1
+                ! Recalculate visible_items in case n_items changed
+                visible_items = term_height - 6
+                if (visible_items < 3) visible_items = 3
+                if (visible_items > n_items) visible_items = n_items
             case ('q', 'Q')  ! Quit
                 running = .false.
             end select
@@ -427,12 +503,13 @@ contains
         call build_and_display_tree('', show_all)
     end subroutine interactive_mode
 
-    subroutine build_item_list(files, n_files, items, n_items, tree_root)
+    subroutine build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
         type(file_entry), intent(in) :: files(:)
         integer, intent(in) :: n_files
         type(selectable_item), allocatable, intent(out) :: items(:)
         integer, intent(out) :: n_items
         type(tree_node), pointer, intent(inout) :: tree_root
+        logical, intent(in) :: hide_dotfiles
         type(selectable_item), allocatable :: temp_items(:)
         integer :: i, max_items
         character(len=512), allocatable :: collapsed_paths(:)
@@ -460,6 +537,17 @@ contains
         tree_root%next_sibling => null()
 
         do i = 1, n_files
+            ! Skip gitignored files and dotfiles if hide_dotfiles is enabled
+            if (hide_dotfiles) then
+                ! Check if this is a gitignored file
+                if (files(i)%is_gitignored) then
+                    cycle  ! Skip this file
+                end if
+                ! Check if this is a dotfile (path starts with . or contains /.)
+                if (index(files(i)%path, '/.') > 0 .or. files(i)%path(1:1) == '.') then
+                    cycle  ! Skip this file
+                end if
+            end if
             call add_to_tree(tree_root, files(i)%path, files(i)%is_staged, files(i)%is_unstaged, files(i)%is_untracked, files(i)%has_incoming, files(i)%is_gitignored)
         end do
 
@@ -478,7 +566,7 @@ contains
         n_items = 0
 
         ! Traverse tree and collect all items
-        call collect_items_from_tree(tree_root, '', 0, temp_items, n_items, max_items)
+        call collect_items_from_tree(tree_root, '', 0, temp_items, n_items, max_items, hide_dotfiles)
 
         ! Copy to output
         allocate(items(n_items))
@@ -488,10 +576,11 @@ contains
         ! Don't free tree - it's kept alive for expand/collapse operations
     end subroutine build_item_list
 
-    subroutine rebuild_item_list_from_tree(tree_root, items, n_items)
+    subroutine rebuild_item_list_from_tree(tree_root, items, n_items, hide_dotfiles)
         type(tree_node), pointer, intent(in) :: tree_root
         type(selectable_item), allocatable, intent(out) :: items(:)
         integer, intent(out) :: n_items
+        logical, intent(in) :: hide_dotfiles
         type(selectable_item), allocatable :: temp_items(:)
         integer :: max_items
 
@@ -501,7 +590,7 @@ contains
         n_items = 0
 
         ! Traverse tree and collect all items
-        call collect_items_from_tree(tree_root, '', 0, temp_items, n_items, max_items)
+        call collect_items_from_tree(tree_root, '', 0, temp_items, n_items, max_items, hide_dotfiles)
 
         ! Copy to output
         allocate(items(n_items))
@@ -659,25 +748,31 @@ contains
         end do
     end subroutine restore_collapsed_state
 
-    recursive subroutine collect_items_from_tree(node, parent_path, depth, items, n_items, max_items)
+    recursive subroutine collect_items_from_tree(node, parent_path, depth, items, n_items, max_items, hide_dotfiles)
         type(tree_node), pointer, intent(in) :: node
         character(len=*), intent(in) :: parent_path
         integer, intent(in) :: depth
         type(selectable_item), allocatable, intent(inout) :: items(:)
         integer, intent(inout) :: n_items, max_items
+        logical, intent(in) :: hide_dotfiles
         type(tree_node), pointer :: child
         character(len=512) :: full_path
+        logical :: is_root
 
-        ! Skip root node
-        if (len_trim(parent_path) > 0 .or. trim(node%name) /= '.') then
-            ! Build full path
-            if (len_trim(parent_path) == 0) then
-                full_path = trim(node%name)
-            else
-                full_path = trim(parent_path) // '/' // trim(node%name)
-            end if
+        ! Check if this is the root node
+        is_root = (len_trim(parent_path) == 0 .and. trim(node%name) == '.')
 
-            ! Add this item
+        ! Build full path
+        if (is_root) then
+            full_path = ''
+        else if (len_trim(parent_path) == 0) then
+            full_path = trim(node%name)
+        else
+            full_path = trim(parent_path) // '/' // trim(node%name)
+        end if
+
+        ! Add this item to the list (unless it's root)
+        if (.not. is_root) then
             n_items = n_items + 1
             if (n_items > max_items) then
                 call resize_item_array(items, max_items)
@@ -690,17 +785,15 @@ contains
             items(n_items)%is_untracked = node%is_untracked
             items(n_items)%has_incoming = node%has_incoming
             items(n_items)%is_gitignored = node%is_gitignored
-            items(n_items)%depth = depth  ! Track nesting depth
-            items(n_items)%node => node  ! Store pointer to tree node
-        else
-            full_path = ''
+            items(n_items)%depth = depth
+            items(n_items)%node => node
         end if
 
-        ! Recursively add children only if this node is expanded (or if it's root)
+        ! Recursively process children if this node is expanded
         if (node%is_expanded) then
             child => node%first_child
             do while (associated(child))
-                call collect_items_from_tree(child, full_path, depth + 1, items, n_items, max_items)
+                call collect_items_from_tree(child, full_path, depth + 1, items, n_items, max_items, hide_dotfiles)
                 child => child%next_sibling
             end do
         end if
@@ -780,11 +873,12 @@ contains
         ! If we get here, we're the only item at this depth, so stay put
     end subroutine navigate_up
 
-    subroutine navigate_right(items, n_items, selected, tree_root)
+    subroutine navigate_right(items, n_items, selected, tree_root, hide_dotfiles)
         type(selectable_item), allocatable, intent(inout) :: items(:)
         integer, intent(inout) :: n_items
         integer, intent(inout) :: selected
         type(tree_node), pointer, intent(in) :: tree_root
+        logical, intent(in) :: hide_dotfiles
         integer :: i, target_depth
 
         if (n_items == 0) return
@@ -795,7 +889,7 @@ contains
             ! Directory is collapsed - expand it
             items(selected)%node%is_expanded = .true.
             ! Rebuild item list
-            call rebuild_item_list_from_tree(tree_root, items, n_items)
+            call rebuild_item_list_from_tree(tree_root, items, n_items, hide_dotfiles)
             ! Adjust selection if needed
             if (selected > n_items .and. n_items > 0) selected = n_items
         end if
