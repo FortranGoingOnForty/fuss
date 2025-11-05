@@ -320,10 +320,10 @@ contains
                 close(99)
             end if
 
-            ! Check for ctrl-q to quit (priority over everything)
-            if (key == achar(17)) then
+            ! Check for ctrl-c to quit (priority over everything)
+            if (key == achar(3)) then
                 open(99, file='/tmp/fuss_debug.log', position='append')
-                write(99, '(A)') 'CTRL-Q detected - quitting!'
+                write(99, '(A)') 'CTRL-C detected - quitting!'
                 close(99)
                 running = .false.
                 cycle
@@ -710,7 +710,7 @@ contains
                     needs_full_redraw = .true.
                 end if
                 ! Note: In normal mode, 'q' is used for fuzzy search
-                ! Use ctrl-q to quit from normal mode
+                ! Use ctrl-c to quit from normal mode
             case default
                 ! Unhandled keys - do nothing
                 continue
