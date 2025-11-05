@@ -1,2 +1,3 @@
 *.o
 fuss
+src/version_module.f90

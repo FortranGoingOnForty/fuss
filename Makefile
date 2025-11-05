@@ -4,9 +4,10 @@ FFLAGS = -O2 -Wall -ffree-line-length-none
 SRC_DIR = src
 BUILD_DIR = build
 BIN_DIR = .
+VERSION := $(shell cat VERSION 2>/dev/null || echo "unknown")
 
 # Module files (order matters for dependencies)
-MODULES = types_module.f90 cache_module.f90 terminal_module.f90 git_module.f90 tree_module.f90 display_module.f90
+MODULES = version_module.f90 types_module.f90 cache_module.f90 terminal_module.f90 git_module.f90 tree_module.f90 display_module.f90
 MODULE_OBJS = $(MODULES:%.f90=$(BUILD_DIR)/%.o)
 
 # Main program
@@ -26,7 +27,18 @@ all: $(TARGET)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+# Generate version module before building
+$(SRC_DIR)/version_module.f90: VERSION
+	@echo "Generating version module..."
+	@echo "module version_module" > $@
+	@echo "    implicit none" >> $@
+	@echo "    character(len=*), parameter :: VERSION = '$(VERSION)'" >> $@
+	@echo "end module version_module" >> $@
+
 # Build modules with explicit dependencies
+$(BUILD_DIR)/version_module.o: $(SRC_DIR)/version_module.f90 | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -c $< -o $@
+
 $(BUILD_DIR)/types_module.o: $(SRC_DIR)/types_module.f90 | $(BUILD_DIR)
 	$(FC) $(FFLAGS) -J$(BUILD_DIR) -c $< -o $@
 
@@ -54,4 +66,4 @@ $(TARGET): $(MODULE_OBJS) $(MAIN_OBJ)
 	$(FC) $(FFLAGS) -o $@ $^
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET)
+	rm -rf $(BUILD_DIR) $(TARGET) $(SRC_DIR)/version_module.f90
