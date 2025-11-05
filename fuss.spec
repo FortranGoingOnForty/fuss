@@ -1,5 +1,5 @@
 Name:           fuss
-Version:        0.9.9
+Version:        0.9.92
 Release:        1%{?dist}
 Summary:        A tree utility for dirty git files, written in modern Fortran
 
@@ -46,6 +46,9 @@ install -Dm644 README.md %{buildroot}%{_docdir}/%{name}/README.md
 %{_docdir}/%{name}/README.md
 
 %changelog
+* Tue Nov 05 2024 mfw <espadon@outlook.com> - 0.9.92-1
+- Enhancements and fixes
+
 * Tue Nov 05 2024 mfw <espadon@outlook.com> - 0.9.9-1
 - Enhancements and fixes
 
