@@ -299,11 +299,11 @@ contains
             prev_selected = selected
             prev_viewport = viewport_offset
 
-            ! Check search timeout (1 second)
+            ! Check search timeout (0.5 seconds)
             if (search_length > 0) then
                 call system_clock(current_tick)
-                ! Check if 1 second has elapsed (clock_rate ticks per second)
-                if (current_tick - last_search_tick > clock_rate) then
+                ! Check if 0.5 seconds has elapsed (clock_rate/2 ticks)
+                if (current_tick - last_search_tick > clock_rate / 2) then
                     search_length = 0
                     search_buffer = ''
                     needs_full_redraw = .true.
@@ -363,6 +363,21 @@ contains
                 if ((key >= 'a' .and. key <= 'z') .or. &
                     ((key >= 'E' .and. key <= 'Z') .or. (key >= '0' .and. key <= '9')) .or. &
                     key == '_' .or. key == '-' .or. key == '.') then
+
+                    ! Check if timeout elapsed since last keypress - if so, start fresh search
+                    if (search_length > 0) then
+                        call system_clock(current_tick)
+                        if (current_tick - last_search_tick > clock_rate / 2) then
+                            ! Timeout elapsed (0.5 seconds) - clear buffer and start new search
+                            search_length = 0
+                            search_buffer = ''
+                            ! DEBUG
+                            open(99, file='/tmp/fuss_debug.log', position='append')
+                            write(99, '(A)') 'TIMEOUT: Starting fresh search (0.5s elapsed)'
+                            close(99)
+                        end if
+                    end if
+
                     ! Add to search buffer
                     if (search_length < 32) then
                         search_length = search_length + 1
@@ -686,6 +701,8 @@ contains
                     ! In normal mode: q quits the application
                     running = .false.
                 end if
+            case (achar(17))  ! Ctrl-Q - force quit from any mode
+                running = .false.
             case default
                 ! Unhandled keys - do nothing
                 continue
@@ -1512,6 +1529,7 @@ contains
 
     subroutine fuzzy_jump_to_match(items, n_items, pattern, selected)
         ! Jump to first item that fuzzy matches the pattern
+        ! Prioritizes matching item names (basename) over full paths
         ! Searches from NEXT position (skips current item to allow cycling)
         type(selectable_item), intent(in) :: items(:)
         integer, intent(in) :: n_items
@@ -1523,6 +1541,28 @@ contains
         start_pos = selected + 1
         if (start_pos > n_items) start_pos = 1
 
+        ! PASS 1: Try to match item NAME first (e.g., "src" matches "src/" before "src/file.f90")
+        ! Search from next position forward
+        do i = start_pos, n_items
+            if (associated(items(i)%node)) then
+                if (fuzzy_match(pattern, items(i)%node%name)) then
+                    selected = i
+                    return
+                end if
+            end if
+        end do
+
+        ! Wrap around: search from beginning to current position (inclusive)
+        do i = 1, selected
+            if (associated(items(i)%node)) then
+                if (fuzzy_match(pattern, items(i)%node%name)) then
+                    selected = i
+                    return
+                end if
+            end if
+        end do
+
+        ! PASS 2: If no name match, try matching full path
         ! Search from next position forward
         do i = start_pos, n_items
             if (fuzzy_match(pattern, items(i)%path)) then

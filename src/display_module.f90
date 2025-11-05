@@ -190,7 +190,7 @@ contains
                          achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                          achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
                          achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
-            print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | alt-g:git-mode | q:quit'
+            print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | alt-g:git-mode | ctrl-q:quit'
         end if
 
         ! Don't free tree - it's owned by interactive_mode
