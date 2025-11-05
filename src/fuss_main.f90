@@ -84,7 +84,7 @@ contains
         print '(A)', '        f               Fetch from remote'
         print '(A)', '        d               Show diff for file'
         print '(A)', '        c               View file contents (bat/less/cat)'
-        print '(A)', '        h               Browse commit history'
+        print '(A)', '        h               Browse commit history (detailed/oneline)'
         print '(A)', '        y               Cherry-pick commit from branch'
         print '(A)', '        v               Revert commit (safe undo)'
         print '(A)', '        x               Discard changes'

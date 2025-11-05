@@ -1506,23 +1506,29 @@ contains
 
     subroutine git_show_history()
         integer :: status_code, status
+        character(len=4096) :: command
 
         ! Restore terminal for fzf
         call execute_command_line('stty sane < /dev/tty', exitstat=status)
 
-        print '(A)', achar(27) // '[1mCommit History' // achar(27) // '[0m'
-        print '(A)', ''
-        print '(A)', 'Browse commit history (read-only):'
-        print '(A)', ''
+        ! Start with detailed view, allow switching with 1/2
+        ! Use --bind to reload with different git log format
+        write(command, '(A)') &
+            'git log --graph --color=always --all --date=relative ' // &
+            '--pretty=format:"%C(yellow)%h%C(reset) - %C(green)(%ar)%C(reset) %s %C(blue)<%an>%C(reset)" | ' // &
+            'fzf --ansi --height=100% --border=rounded ' // &
+            '--border-label=" History - Press 1:detailed 2:oneline ESC:close " ' // &
+            '--prompt="Commit: " ' // &
+            '--header="Switch views: 1=detailed  2=oneline" ' // &
+            '--preview="echo {} | grep -o ''[0-9a-f]\{7,\}'' | head -1 | ' // &
+            'xargs git show --color=always" ' // &
+            '--preview-window=right:60% ' // &
+            '--bind ''1:reload(git log --graph --color=always --all --date=relative ' // &
+            '--pretty=format:\"%C(yellow)%h%C(reset) - %C(green)(%ar)%C(reset) %s %C(blue)<%an>%C(reset)\")'' ' // &
+            '--bind ''2:reload(git log --oneline --graph --color=always --all)'' ' // &
+            '> /dev/null'
 
-        ! Browse commits with fzf (no action, just viewing)
-        call execute_command_line('git log --oneline --graph --color=always --all | ' // &
-                                  'fzf --ansi --height=100% --border=rounded --border-label=" ESC to close " ' // &
-                                  '--prompt="Browse commits: " ' // &
-                                  '--preview="echo {} | grep -o ''^[*|\\ /]*[0-9a-f]\+'' | head -1 | ' // &
-                                  'xargs -I % git show --color=always %" ' // &
-                                  '--preview-window=right:60% --no-select > /dev/null', &
-                                  exitstat=status_code)
+        call execute_command_line(trim(command), exitstat=status_code)
 
         ! Re-enable cbreak mode
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
