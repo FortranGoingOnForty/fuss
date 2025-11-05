@@ -36,6 +36,22 @@ contains
         call execute_command_line('stty sane < /dev/tty', exitstat=status)
     end subroutine disable_raw_mode
 
+    subroutine flush_stdin()
+        integer :: status
+        ! Flush any buffered input from stdin using dd with non-blocking I/O
+        ! This prevents queued keypresses from being processed after long operations
+        call execute_command_line('dd if=/dev/tty of=/dev/null iflag=nonblock count=1 status=none 2>/dev/null', &
+                                  exitstat=status)
+    end subroutine flush_stdin
+
+    subroutine wait_for_key(key)
+        character(len=1), intent(out) :: key
+        ! Flush any buffered input before waiting for keypress
+        ! This prevents accidental double-inputs after long operations
+        call flush_stdin()
+        call read_key(key)
+    end subroutine wait_for_key
+
     subroutine read_key(key)
         character(len=1), intent(out) :: key
         character(len=3) :: escape_seq

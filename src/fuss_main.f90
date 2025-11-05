@@ -949,8 +949,8 @@ contains
         if (len_trim(commit_msg) > 0) then
             call git_commit_with_message(commit_msg, success)
 
-            ! Wait for keypress to continue
-            call read_key(key)
+            ! Wait for keypress to continue (flush buffered input first)
+            call wait_for_key(key)
         end if
     end subroutine commit_prompt
 
@@ -986,12 +986,12 @@ contains
         if (len_trim(commit_msg) > 0) then
             call git_commit_amend(commit_msg, success)
 
-            ! Wait for keypress to continue
-            call read_key(key)
+            ! Wait for keypress to continue (flush buffered input first)
+            call wait_for_key(key)
         else
             print '(A)', 'No commit message provided. Amend cancelled.'
             print '(A)', 'Press any key to continue...'
-            call read_key(key)
+            call wait_for_key(key)
         end if
     end subroutine amend_commit_prompt
 
@@ -1014,8 +1014,8 @@ contains
         ! Execute push
         call git_push(success)
 
-        ! Wait for keypress to continue
-        call read_key(key)
+        ! Wait for keypress to continue (flush buffered input first)
+        call wait_for_key(key)
     end subroutine push_prompt
 
     subroutine tag_prompt()
@@ -1060,9 +1060,9 @@ contains
                 end if
             end if
 
-            ! Wait for keypress to continue
+            ! Wait for keypress to continue (flush buffered input first)
             print '(A)', 'Press any key to continue...'
-            call read_key(key)
+            call wait_for_key(key)
         end if
     end subroutine tag_prompt
 
