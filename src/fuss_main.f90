@@ -324,8 +324,12 @@ contains
             ! Always use fast blocking read - timeouts are too slow
             call read_key(key)
 
-            ! DEBUG: Log all control characters to see what we're getting
-            if (ichar(key) < 32) then
+            ! DEBUG: Log ALL keys when in rename mode, otherwise just control chars
+            if (in_rename_mode) then
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A,I0,A)') 'RENAME INPUT: code=', ichar(key), ' (all keys logged in rename mode)'
+                close(99)
+            else if (ichar(key) < 32) then
                 open(99, file='/tmp/fuss_debug.log', position='append')
                 write(99, '(A,I0)') 'Control char received: ', ichar(key)
                 close(99)
@@ -387,6 +391,7 @@ contains
                     rename_original_name = items(selected)%node%name
                     rename_buffer = items(selected)%node%name
                     rename_cursor_pos = len_trim(rename_buffer)
+                    ! Stay in cbreak mode - raw mode breaks terminal output
                     needs_full_redraw = .true.
                 end if
                 cycle
@@ -395,7 +400,7 @@ contains
             ! Handle ESC key - exit rename mode, git mode, or clear search
             if (key == achar(27)) then
                 if (in_rename_mode) then
-                    ! Cancel rename - restore original name
+                    ! Cancel rename
                     in_rename_mode = .false.
                     rename_buffer = ''
                     rename_original_name = ''
@@ -426,18 +431,13 @@ contains
 
             ! Rename mode key handling - intercept all keys when in rename mode
             if (in_rename_mode) then
-                ! DEBUG: Log all keys in rename mode
-                open(99, file='/tmp/fuss_debug.log', position='append')
-                write(99, '(A,I0,A,I0)') 'RENAME MODE: key code=', ichar(key), ' decimal=', ichar(key)
-                close(99)
-
-                ! Handle Enter (multiple possible codes) or Tab to confirm rename
-                ! achar(10) = LF, achar(13) = CR, achar(9) = Tab, achar(0) = null
+                ! Handle Tab to confirm rename (Enter codes checked but won't work in cbreak mode)
+                ! achar(9) = Tab, achar(10) = LF, achar(13) = CR (cbreak mode eats Enter)
                 if (key == achar(10) .or. key == achar(13) .or. key == achar(9) .or. &
                     key == achar(0) .or. ichar(key) == 10 .or. ichar(key) == 13) then
-                    ! Enter or Tab - execute rename
+                    ! Tab saves rename (Enter codes kept for compatibility but don't work)
                     open(99, file='/tmp/fuss_debug.log', position='append')
-                    write(99, '(A)') 'RENAME MODE: ENTER/TAB detected - executing rename'
+                    write(99, '(A)') 'RENAME MODE: TAB detected - executing rename'
                     close(99)
                     call execute_rename(items(selected)%path, trim(rename_buffer))
                     in_rename_mode = .false.
@@ -1858,9 +1858,9 @@ contains
     subroutine execute_rename(old_path, new_name)
         ! Execute file/directory rename
         character(len=*), intent(in) :: old_path, new_name
-        character(len=1024) :: dirname, new_path, command
+        character(len=1024) :: dirname, new_path, command, old_path_lower, new_path_lower
         integer :: status, last_slash
-        logical :: file_exists
+        logical :: file_exists, case_only_change
 
         ! Validate new name
         if (len_trim(new_name) == 0) then
@@ -1879,8 +1879,20 @@ contains
         ! Build new full path
         write(new_path, '(A,A)') trim(dirname), trim(new_name)
 
-        ! Check if new path already exists (and it's not the same file)
-        if (trim(new_path) /= trim(old_path)) then
+        ! If it's the exact same name, do nothing
+        if (trim(new_path) == trim(old_path)) then
+            return
+        end if
+
+        ! Check if this is a case-only change (for case-insensitive filesystems like macOS)
+        old_path_lower = old_path
+        new_path_lower = new_path
+        call to_lowercase(old_path_lower)
+        call to_lowercase(new_path_lower)
+        case_only_change = (trim(old_path_lower) == trim(new_path_lower))
+
+        ! Check if new path already exists (skip check for case-only changes)
+        if (.not. case_only_change) then
             inquire(file=trim(new_path), exist=file_exists)
             if (file_exists) then
                 call show_message_and_wait('Error: A file with that name already exists!')
@@ -1888,13 +1900,9 @@ contains
             end if
         end if
 
-        ! If it's the same name, do nothing
-        if (trim(new_path) == trim(old_path)) then
-            return
-        end if
-
         ! Execute rename using mv command
-        write(command, '(A,A,A,A,A)') 'mv "', trim(old_path), '" "', trim(new_path), '" 2>/dev/null'
+        ! Use -f flag to force case-only renames on case-insensitive filesystems
+        write(command, '(A,A,A,A,A)') 'mv -f "', trim(old_path), '" "', trim(new_path), '" 2>/dev/null'
         call execute_command_line(trim(command), exitstat=status)
 
         if (status /= 0) then
