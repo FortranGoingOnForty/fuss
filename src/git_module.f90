@@ -1507,26 +1507,29 @@ contains
     subroutine git_show_history()
         integer :: status_code, status
         character(len=4096) :: command
+        character(len=1) :: q, sq
 
         ! Restore terminal for fzf
         call execute_command_line('stty sane < /dev/tty', exitstat=status)
 
+        ! Set up quote characters for easier reading
+        q = achar(34)   ! double quote "
+        sq = achar(39)  ! single quote '
+
         ! Start with detailed view, allow switching with 1/2
-        ! Use --bind to reload with different git log format
-        write(command, '(A)') &
-            'git log --graph --color=always --all --date=relative ' // &
-            '--pretty=format:"%C(yellow)%h%C(reset) - %C(green)(%ar)%C(reset) %s %C(blue)<%an>%C(reset)" | ' // &
-            'fzf --ansi --height=100% --border=rounded ' // &
-            '--border-label=" History - Press 1:detailed 2:oneline ESC:close " ' // &
-            '--prompt="Commit: " ' // &
-            '--header="Switch views: 1=detailed  2=oneline" ' // &
-            '--preview="echo {} | grep -o ''[0-9a-f]\{7,\}'' | head -1 | ' // &
-            'xargs git show --color=always" ' // &
-            '--preview-window=right:60% ' // &
-            '--bind ''1:reload(git log --graph --color=always --all --date=relative ' // &
-            '--pretty=format:\"%C(yellow)%h%C(reset) - %C(green)(%ar)%C(reset) %s %C(blue)<%an>%C(reset)\")'' ' // &
-            '--bind ''2:reload(git log --oneline --graph --color=always --all)'' ' // &
-            '> /dev/null'
+        ! Build command carefully to avoid quote hell
+        ! Detailed format: hash - relative date - message <author>
+        command = 'git log --graph --color=always --all --pretty=' // sq // '%h - %ar - %s <%an>' // sq // ' | ' // &
+                  'fzf --ansi --height=100% --border=rounded ' // &
+                  '--border-label=' // q // ' History - Press 1:detailed 2:oneline ESC:close ' // q // ' ' // &
+                  '--prompt=' // q // 'Commit: ' // q // ' ' // &
+                  '--header=' // q // 'Switch views: 1=detailed  2=oneline' // q // ' ' // &
+                  '--preview=' // q // 'echo {} | grep -o ' // sq // '[0-9a-f]\{7,\}' // sq // &
+                  ' | head -1 | xargs git show --color=always' // q // ' ' // &
+                  '--preview-window=right:60% ' // &
+                  '--bind=' // q // '1:reload(git log --graph --color=always --all --pretty=' // sq // '%h - %ar - %s <%an>' // sq // ')' // q // ' ' // &
+                  '--bind=' // q // '2:reload(git log --oneline --graph --color=always --all)' // q // ' ' // &
+                  '> /dev/null'
 
         call execute_command_line(trim(command), exitstat=status_code)
 
