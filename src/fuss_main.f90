@@ -83,6 +83,8 @@ contains
         print '(A)', '        l               Pull from remote'
         print '(A)', '        f               Fetch from remote'
         print '(A)', '        d               Show diff for file'
+        print '(A)', '        c               View file contents (bat/less/cat)'
+        print '(A)', '        y               Cherry-pick commit from branch'
         print '(A)', '        x               Discard changes'
         print '(A)', ''
         print '(A)', '    Branches & Stash:'
@@ -409,6 +411,10 @@ contains
                 if (items(selected)%is_file) then
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
                 end if
+            case ('c')  ! View file contents (cat/bat/less)
+                if (items(selected)%is_file) then
+                    call view_file(items(selected)%path)
+                end if
             case ('r')  ! Remove/delete file
                 if (items(selected)%is_file) then
                     call delete_prompt(items(selected)%path, items(selected)%is_untracked)
@@ -466,6 +472,17 @@ contains
             case ('Z')  ! Stash pop/apply (restore changes)
                 call stash_pop_apply_prompt()
                 ! Refresh files after stash pop/apply
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('y')  ! Cherry-pick (yank commit)
+                call cherry_pick_prompt()
+                ! Refresh files after cherry-pick
                 if (show_all) then
                     call get_all_files(files, n_files)
                 else
@@ -1144,6 +1161,16 @@ contains
         ! Wait for keypress to continue
         call read_key(key)
     end subroutine stash_pop_apply_prompt
+
+    subroutine cherry_pick_prompt()
+        logical :: success
+
+        ! Clear screen for cherry-pick
+        call clear_screen()
+
+        ! Call git cherry-pick (handles its own prompts and key wait)
+        call git_cherry_pick(success)
+    end subroutine cherry_pick_prompt
 
     subroutine branch_create_prompt()
         character(len=512) :: branch_name

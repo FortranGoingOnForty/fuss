@@ -1274,6 +1274,160 @@ contains
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine git_diff_file
 
+    subroutine view_file(filepath)
+        character(len=*), intent(in) :: filepath
+        character(len=2048) :: command
+        integer :: status
+        logical :: bat_available, less_available
+
+        ! Restore terminal temporarily for pager
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Check if bat is available
+        call execute_command_line('command -v bat > /dev/null 2>&1', exitstat=status)
+        bat_available = (status == 0)
+
+        ! Check if less is available
+        call execute_command_line('command -v less > /dev/null 2>&1', exitstat=status)
+        less_available = (status == 0)
+
+        ! Use bat if available (with nice syntax highlighting)
+        if (bat_available) then
+            write(command, '(A,A,A)') 'bat --style=numbers,changes --color=always "', trim(filepath), '"'
+            call execute_command_line(trim(command), exitstat=status)
+        else if (less_available) then
+            ! Fallback to less
+            write(command, '(A,A,A)') 'less "', trim(filepath), '"'
+            call execute_command_line(trim(command), exitstat=status)
+        else
+            ! Final fallback to cat with line numbers
+            write(command, '(A,A,A)') 'cat -n "', trim(filepath), '"'
+            call execute_command_line(trim(command), exitstat=status)
+            ! Pause so user can read
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+        end if
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine view_file
+
+    subroutine git_cherry_pick(success)
+        logical, intent(out) :: success
+        integer :: status_code, status
+        character(len=512) :: selected_branch, selected_commit
+        character(len=2048) :: command
+
+        success = .false.
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        print '(A)', achar(27) // '[1mCherry-pick' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Select source branch:'
+        print '(A)', ''
+
+        ! Step 1: Select branch (exclude current branch)
+        call execute_command_line('(git branch --all | grep -v HEAD | grep -v "^\*" | sed "s/^[* ] //" | ' // &
+                                  'sed "s/remotes\\/origin\\///" | sort -u) | ' // &
+                                  'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
+                                  '--prompt="Source branch: " ' // &
+                                  '--preview="git log --oneline --graph --color=always {} | head -20" ' // &
+                                  '--preview-window=right:50% > /tmp/fuss_branch_select.txt', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            call execute_command_line('rm -f /tmp/fuss_branch_select.txt', exitstat=status)
+            print '(A)', ''
+            print '(A)', 'Operation cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Read selected branch
+        open(unit=99, file='/tmp/fuss_branch_select.txt', status='old', action='read')
+        read(99, '(A)', iostat=status) selected_branch
+        close(99, status='delete')
+
+        if (status /= 0 .or. len_trim(selected_branch) == 0) then
+            print '(A)', ''
+            print '(A)', 'No branch selected.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Step 2: Select commit from that branch (only commits NOT in current branch)
+        print '(A)', ''
+        print '(A)', 'Select commit to cherry-pick from: ' // trim(selected_branch)
+        print '(A)', ''
+
+        write(command, '(A,A,A)') '(git log ', trim(selected_branch), ' --not HEAD --oneline --color=always) | ' // &
+                                  'fzf --height=20 --border=rounded --border-label=" ESC to cancel " ' // &
+                                  '--prompt="Commit: " ' // &
+                                  '--preview="git show --color=always {1}" ' // &
+                                  '--preview-window=right:60% > /tmp/fuss_commit_select.txt'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        if (status_code /= 0) then
+            call execute_command_line('rm -f /tmp/fuss_commit_select.txt', exitstat=status)
+            print '(A)', ''
+            print '(A)', 'Operation cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Read selected commit (first 7 chars is the hash)
+        open(unit=99, file='/tmp/fuss_commit_select.txt', status='old', action='read')
+        read(99, '(A)', iostat=status) selected_commit
+        close(99, status='delete')
+
+        if (status /= 0 .or. len_trim(selected_commit) == 0) then
+            print '(A)', ''
+            print '(A)', 'No commit selected.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Extract commit hash (first word)
+        selected_commit = selected_commit(1:7)
+
+        ! Step 3: Perform cherry-pick
+        print '(A)', ''
+        write(command, '(A,A,A)') 'git cherry-pick ', trim(selected_commit), ' 2>&1'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        print '(A)', ''
+        if (status_code == 0) then
+            print '(A)', achar(27) // '[32m✓ Cherry-picked ' // trim(selected_commit) // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Cherry-pick failed or has conflicts' // achar(27) // '[0m'
+            print '(A)', 'Resolve conflicts, then run: git cherry-pick --continue'
+            print '(A)', 'Or abort with: git cherry-pick --abort'
+        end if
+
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
+        call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_cherry_pick
+
     subroutine git_tag(tag_name, tag_message, success)
         character(len=*), intent(in) :: tag_name
         character(len=*), intent(in) :: tag_message
