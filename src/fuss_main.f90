@@ -84,6 +84,7 @@ contains
         print '(A)', '        f               Fetch from remote'
         print '(A)', '        d               Show diff for file'
         print '(A)', '        c               View file contents (bat/less/cat)'
+        print '(A)', '        w               Git blame (who changed this line)'
         print '(A)', '        h               Browse commit history (detailed/oneline)'
         print '(A)', '        y               Cherry-pick commit from branch'
         print '(A)', '        v               Revert commit (safe undo)'
@@ -94,6 +95,7 @@ contains
         print '(A)', '        n               Create new branch'
         print '(A)', '        R               Delete branch'
         print '(A)', '        G               Merge branch into current'
+        print '(A)', '        O               Reset to commit (soft/mixed/hard)'
         print '(A)', '        z               Stash changes'
         print '(A)', '        Z               Unstash/pop changes'
         print '(A)', ''
@@ -417,6 +419,10 @@ contains
                 if (items(selected)%is_file) then
                     call view_file(items(selected)%path)
                 end if
+            case ('w')  ! Git blame (who changed this line)
+                if (items(selected)%is_file) then
+                    call blame_prompt(items(selected)%path)
+                end if
             case ('r')  ! Remove/delete file
                 if (items(selected)%is_file) then
                     call delete_prompt(items(selected)%path, items(selected)%is_untracked)
@@ -520,6 +526,17 @@ contains
                 if (selected > n_items .and. n_items > 0) selected = n_items
                 ! Update branch name display in case we merged
                 call get_repo_info(repo_name, branch_name)
+            case ('O')  ! Reset (Shift+o - "Oh no, undo!")
+                call reset_prompt()
+                ! Refresh files after reset
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
+                if (selected > n_items .and. n_items > 0) selected = n_items
             case ('.')  ! Toggle hiding dotfiles and gitignored files
                 hide_dotfiles = .not. hide_dotfiles
                 ! Rebuild item list with new filter
@@ -1227,6 +1244,26 @@ contains
         ! Call git merge (handles its own prompts and key wait)
         call git_merge_branch(success)
     end subroutine merge_branch_prompt
+
+    subroutine blame_prompt(filepath)
+        character(len=*), intent(in) :: filepath
+
+        ! Clear screen for blame view
+        call clear_screen()
+
+        ! Call git blame (handles its own display and key wait)
+        call git_blame_file(filepath)
+    end subroutine blame_prompt
+
+    subroutine reset_prompt()
+        logical :: success
+
+        ! Clear screen for reset
+        call clear_screen()
+
+        ! Call git reset (handles its own prompts and key wait)
+        call git_reset_interactive(success)
+    end subroutine reset_prompt
 
     subroutine branch_create_prompt()
         character(len=512) :: branch_name

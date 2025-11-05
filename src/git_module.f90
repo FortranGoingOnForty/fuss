@@ -1996,4 +1996,190 @@ contains
         print '(A)', 'Press any key to continue...'
     end subroutine git_stash_pop_apply
 
+    subroutine git_blame_file(filepath)
+        character(len=*), intent(in) :: filepath
+        integer :: status_code, status
+        character(len=4096) :: command
+        character(len=1) :: q, sq
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Set up quote characters
+        q = achar(34)   ! double quote "
+        sq = achar(39)  ! single quote '
+
+        ! Check if file is tracked by git
+        call execute_command_line('git ls-files --error-unmatch "' // trim(filepath) // '" > /dev/null 2>&1', &
+                                  exitstat=status_code)
+        if (status_code /= 0) then
+            print '(A)', achar(27) // '[31m✗ File is not tracked by git' // achar(27) // '[0m'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Build fzf command with view toggling
+        ! Start with compact view, allow switching with 1/2/3
+        ! Compact: hash + line (no author/date)
+        command = 'git blame -s --color-lines "' // trim(filepath) // '" | ' // &
+                  'fzf --ansi --height=100% --border=rounded ' // &
+                  '--border-label=' // q // ' Blame - Press 1:compact 2:detailed 3:full ESC:close ' // q // ' ' // &
+                  '--prompt=' // q // 'Who changed this? ' // q // ' ' // &
+                  '--header=' // q // 'Switch views: 1=compact  2=detailed  3=full' // q // ' ' // &
+                  '--preview=' // q // 'echo {} | grep -o ' // sq // '[0-9a-f]\{7,\}' // sq // &
+                  ' | head -1 | xargs git show --color=always' // q // ' ' // &
+                  '--preview-window=right:60% ' // &
+                  '--bind=' // q // '1:reload(git blame -s --color-lines ' // q // trim(filepath) // q // ')' // q // ' ' // &
+                  '--bind=' // q // '2:reload(git blame --color-lines ' // q // trim(filepath) // q // ')' // q // ' ' // &
+                  '--bind=' // q // '3:reload(git blame --color-by-age ' // q // trim(filepath) // q // ')' // q // ' ' // &
+                  '> /dev/null'
+
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_blame_file
+
+    subroutine git_reset_interactive(success)
+        logical, intent(out) :: success
+        integer :: status_code, status
+        character(len=512) :: selected_commit, reset_mode, confirmation
+        character(len=2048) :: command
+        character(len=1) :: mode_choice
+
+        success = .false.
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Step 1: Select commit to reset to
+        print '(A)', achar(27) // '[1mReset to Commit' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Select commit to reset to:'
+        print '(A)', ''
+
+        call execute_command_line('git log --oneline --color=always -n 50 | ' // &
+                                  'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
+                                  '--prompt="Reset to: " ' // &
+                                  '--preview="git show --stat --color=always {1}" ' // &
+                                  '--preview-window=right:60% > /tmp/fuss_reset_commit.txt', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            print '(A)', 'Reset cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Read selected commit
+        open(unit=99, file='/tmp/fuss_reset_commit.txt', status='old', action='read', iostat=status)
+        if (status /= 0) then
+            print '(A)', achar(27) // '[31m✗ Failed to read selection' // achar(27) // '[0m'
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+        read(99, '(A)', iostat=status) selected_commit
+        close(99)
+
+        ! Extract just the commit hash (first word)
+        read(selected_commit, *, iostat=status) selected_commit
+
+        ! Step 2: Select reset mode
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mReset Mode' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Choose reset mode:'
+        print '(A)', ''
+        print '(A)', achar(27) // '[32m  1' // achar(27) // '[0m - Soft   (keep changes staged)'
+        print '(A)', achar(27) // '[33m  2' // achar(27) // '[0m - Mixed  (keep changes unstaged) [DEFAULT]'
+        print '(A)', achar(27) // '[31m  3' // achar(27) // '[0m - Hard   (DISCARD all changes - DANGEROUS!)'
+        print '(A)', ''
+        print '(A)', 'Enter choice (1/2/3) or ESC to cancel: '
+
+        ! Get mode choice
+        call execute_command_line('read -n 1 choice < /dev/tty; echo $choice > /tmp/fuss_reset_mode.txt', &
+                                  exitstat=status)
+
+        ! Read mode choice
+        open(unit=99, file='/tmp/fuss_reset_mode.txt', status='old', action='read', iostat=status)
+        if (status /= 0) then
+            print '(A)', 'Reset cancelled.'
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+        read(99, '(A)', iostat=status) mode_choice
+        close(99)
+
+        ! Determine reset mode
+        select case (mode_choice)
+            case ('1')
+                reset_mode = '--soft'
+            case ('2')
+                reset_mode = '--mixed'
+            case ('3')
+                reset_mode = '--hard'
+                ! Extra confirmation for hard reset
+                print '(A)', ''
+                print '(A)', achar(27) // '[1;31mWARNING: Hard reset will DESTROY all uncommitted changes!' // achar(27) // '[0m'
+                print '(A)', achar(27) // '[1;31mThis operation CANNOT be undone!' // achar(27) // '[0m'
+                print '(A)', ''
+                print '(A)', 'Type "yes" to confirm hard reset: '
+                call execute_command_line('read conf < /dev/tty; echo $conf > /tmp/fuss_reset_confirm.txt', &
+                                          exitstat=status)
+
+                ! Read confirmation
+                open(unit=99, file='/tmp/fuss_reset_confirm.txt', status='old', action='read', iostat=status)
+                if (status == 0) then
+                    read(99, '(A)', iostat=status) confirmation
+                    close(99)
+                    if (trim(confirmation) /= 'yes') then
+                        print '(A)', ''
+                        print '(A)', 'Hard reset cancelled (confirmation not received).'
+                        print '(A)', ''
+                        print '(A)', 'Press any key to continue...'
+                        call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+                        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+                        return
+                    end if
+                else
+                    print '(A)', 'Reset cancelled.'
+                    call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+                    return
+                end if
+            case default
+                print '(A)', ''
+                print '(A)', 'Reset cancelled.'
+                print '(A)', ''
+                print '(A)', 'Press any key to continue...'
+                call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+                call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+                return
+        end select
+
+        ! Execute reset
+        print '(A)', ''
+        write(command, '(A,A,A,A,A)') 'git reset ', trim(reset_mode), ' ', trim(selected_commit), ' 2>&1'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        if (status_code == 0) then
+            print '(A)', achar(27) // '[32m✓ Reset to ' // trim(selected_commit) // ' (' // trim(reset_mode) // ')' // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Reset failed' // achar(27) // '[0m'
+        end if
+
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
+        call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_reset_interactive
+
 end module git_module
