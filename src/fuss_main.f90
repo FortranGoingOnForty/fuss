@@ -359,6 +359,7 @@ contains
                     needs_full_redraw = .true.
             case ('s')  ! Show git status (lowercase)
                 call show_status_view()
+                needs_full_redraw = .true.
             case ('p')  ! Push (lowercase)
                 call push_prompt()
                 ! Refresh files after push
@@ -367,6 +368,7 @@ contains
                     needs_full_redraw = .true.
             case ('t')  ! Tag (lowercase)
                 call tag_prompt()
+                needs_full_redraw = .true.
             case ('b')  ! Switch branch
                 call branch_switch_prompt()
                 ! Refresh files after branch switch
@@ -385,6 +387,7 @@ contains
                 call get_repo_info(repo_name, branch_name)
             case ('R')  ! Delete branch (Shift+r, since 'r' is used for delete file)
                 call branch_delete_prompt()
+                needs_full_redraw = .true.
                 ! No need to refresh files or update branch name (stays on current branch)
             case ('f')  ! Git fetch
                 call git_fetch()
@@ -395,14 +398,17 @@ contains
             case ('d')  ! Git diff with less
                 if (items(selected)%is_file) then
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
+                    needs_full_redraw = .true.
                 end if
             case ('c')  ! View file contents (cat/bat/less)
                 if (items(selected)%is_file) then
                     call view_file(items(selected)%path)
+                    needs_full_redraw = .true.
                 end if
             case ('w')  ! Git blame (who changed this line)
                 if (items(selected)%is_file) then
                     call blame_prompt(items(selected)%path)
+                    needs_full_redraw = .true.
                 end if
             case ('r')  ! Remove/delete file
                 if (items(selected)%is_file) then
@@ -454,10 +460,10 @@ contains
                     needs_full_redraw = .true.
             case ('h')  ! Show commit history
                 call history_browser_prompt()
-                ! No refresh needed - read-only
+                needs_full_redraw = .true.
             case ('L')  ! Show reflog (Shift+l)
                 call reflog_browser_prompt()
-                ! No refresh needed - read-only
+                needs_full_redraw = .true.
             case ('G')  ! Merge branch (Shift+g)
                 call merge_branch_prompt()
                 ! Refresh files after merge
