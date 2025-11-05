@@ -129,11 +129,11 @@ contains
     end subroutine print_tree_node
 
     subroutine draw_interactive_tree(tree_root, items, n_items, selected, &
-                                     repo_name, branch_name, viewport_offset, visible_items, top_padding)
+                                     repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
         type(tree_node), pointer, intent(in) :: tree_root
         integer, intent(in) :: n_items, selected
         type(selectable_item), intent(in) :: items(:)
-        character(len=*), intent(in) :: repo_name, branch_name
+        character(len=*), intent(in) :: repo_name, branch_name, mode
         integer, intent(in) :: viewport_offset, visible_items, top_padding
         integer :: item_idx, viewport_end, i
         character(len=512) :: status_line
@@ -143,12 +143,23 @@ contains
             print '(A)', ''
         end do
 
-        ! Display repo:branch info at top if available
+        ! Display repo:branch info at top with mode indicator
         if (len_trim(repo_name) > 0 .and. len_trim(branch_name) > 0) then
-            write(status_line, '(A,A,A,A,A,A,A)') &
-                achar(27) // '[1;36m', trim(repo_name), achar(27) // '[0m', &
-                ':', &
-                achar(27) // '[1;33m', trim(branch_name), achar(27) // '[0m'
+            if (mode == 'git') then
+                ! Git mode: show in yellow/orange
+                write(status_line, '(A,A,A,A,A,A,A,A,A,A,A)') &
+                    achar(27) // '[1;36m', trim(repo_name), achar(27) // '[0m', &
+                    ':', &
+                    achar(27) // '[1;33m', trim(branch_name), achar(27) // '[0m', &
+                    ' ', &
+                    achar(27) // '[1;33m[ GIT MODE ]', achar(27) // '[0m'
+            else
+                ! Normal mode
+                write(status_line, '(A,A,A,A,A,A,A)') &
+                    achar(27) // '[1;36m', trim(repo_name), achar(27) // '[0m', &
+                    ':', &
+                    achar(27) // '[1;33m', trim(branch_name), achar(27) // '[0m'
+            end if
             print '(A)', trim(status_line)
             print '(A)', ''
         end if
@@ -163,13 +174,23 @@ contains
         call print_interactive_node(tree_root, '', .true., .true., items, selected, &
                                     item_idx, viewport_offset, viewport_end)
 
-        ! Print help (two rows for better readability)
+        ! Print help (mode-dependent)
         print '(A)', ''
-        print '(A)', 'Legend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
-                     achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
-                     achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
-                     achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
-        print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | G:merge | O:reset | I:rebase | f:fetch | d:diff | c:view | w:blame | h:history | L:reflog | y:cherry-pick | v:revert | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s:status | q:quit'
+        if (mode == 'git') then
+            ! Git mode help - show in yellow tint
+            print '(A)', achar(27) // '[33mLegend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
+                         achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
+                         achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
+                         achar(27) // '[34m↓' // achar(27) // '[0m=incoming' // achar(27) // '[0m'
+            print '(A)', achar(27) // '[33mKeys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | G:merge | O:reset | I:rebase | f:fetch | d:diff | c:view | w:blame | h:history | L:reflog | y:cherry-pick | v:revert | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s:status | q:exit-mode | ESC:exit-mode' // achar(27) // '[0m'
+        else
+            ! Normal mode help
+            print '(A)', 'Legend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
+                         achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
+                         achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
+                         achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
+            print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | alt-g:git-mode | q:quit'
+        end if
 
         ! Don't free tree - it's owned by interactive_mode
     end subroutine draw_interactive_tree

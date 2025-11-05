@@ -178,6 +178,7 @@ contains
         integer :: term_height, viewport_offset, visible_items, top_padding
         integer :: prev_selected, prev_viewport
         logical :: needs_full_redraw
+        character(len=10) :: mode  ! "normal" or "git" mode
         type(tree_node), pointer :: tree_root
 
         ! Initialize tree pointer
@@ -243,6 +244,7 @@ contains
         selected = 1
         viewport_offset = 1
         running = .true.
+        mode = 'normal'  ! Start in normal mode
 
         ! Partial redraw optimization: initialize tracking state
         prev_selected = 0  ! Force initial draw
@@ -271,14 +273,14 @@ contains
                 ! Full redraw needed: viewport scrolled or forced refresh
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
                 needs_full_redraw = .false.
             else if (selected /= prev_selected) then
                 ! Only selection changed within same viewport - still need full redraw for now
                 ! TODO: Could optimize this with partial line updates in the future
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
             end if
 
             ! Update tracking state
@@ -287,6 +289,30 @@ contains
 
             ! Read key
             call read_key(key)
+
+            ! Check for alt-g to toggle git mode
+            ! alt-g is encoded as achar(1 + ichar('g') - ichar('a')) = achar(7)
+            if (key == achar(7)) then
+                ! Toggle between normal and git mode
+                if (mode == 'normal') then
+                    mode = 'git'
+                else
+                    mode = 'normal'
+                end if
+                needs_full_redraw = .true.
+                cycle  ! Skip rest of key handling
+            end if
+
+            ! Handle ESC key - exit git mode if active
+            if (key == achar(27)) then
+                if (mode == 'git') then
+                    mode = 'normal'
+                    needs_full_redraw = .true.
+                    cycle
+                end if
+                ! In normal mode, ESC does nothing for now
+                cycle
+            end if
 
             ! Handle input
             select case (key)
@@ -309,24 +335,27 @@ contains
                     ! Force full redraw after tree structure change
                     needs_full_redraw = .true.
                 end if
+            ! Git operations - only available in git mode
             case ('a')  ! Stage file or directory (lowercase to avoid conflict with arrow A)
-                ! Check if it's a directory - stage all files in it
-                if (.not. items(selected)%is_file) then
-                    call git_stage_directory(items(selected)%path)
-                    ! Refresh files after staging directory
-                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Otherwise it's a file - stage individual file
-                else if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
-                    call git_add_file(items(selected)%path)
-                    ! Refresh files after git add
-                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    ! Check if it's a directory - stage all files in it
+                    if (.not. items(selected)%is_file) then
+                        call git_stage_directory(items(selected)%path)
+                        ! Refresh files after staging directory
+                        call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                                hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Otherwise it's a file - stage individual file
+                    else if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
+                        call git_add_file(items(selected)%path)
+                        ! Refresh files after git add
+                        call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                                hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    end if
                 end if
             case ('u')  ! Unstage file (lowercase)
-                if (items(selected)%is_file .and. items(selected)%is_staged) then
+                if (mode == 'git' .and. items(selected)%is_file .and. items(selected)%is_staged) then
                     call git_unstage_file(items(selected)%path)
                     ! Refresh files after git unstage
                     call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
@@ -334,84 +363,106 @@ contains
                     needs_full_redraw = .true.
                 end if
             case ('S')  ! Stage all (Shift+S to avoid conflict with up arrow 'A')
-                call git_stage_all()
-                ! Refresh files after staging all
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call git_stage_all()
+                    ! Refresh files after staging all
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('U')  ! Unstage all (Shift+U)
-                call git_unstage_all()
-                ! Refresh files after unstaging all
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call git_unstage_all()
+                    ! Refresh files after unstaging all
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('m')  ! Commit (lowercase)
-                call commit_prompt()
-                ! Refresh files after commit
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call commit_prompt()
+                    ! Refresh files after commit
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('M')  ! Amend last commit (Shift+m)
-                call amend_commit_prompt()
-                ! Refresh files after amend commit
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call amend_commit_prompt()
+                    ! Refresh files after amend commit
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('s')  ! Show git status (lowercase)
-                call show_status_view()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call show_status_view()
+                    needs_full_redraw = .true.
+                end if
             case ('p')  ! Push (lowercase)
-                call push_prompt()
-                ! Refresh files after push
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call push_prompt()
+                    ! Refresh files after push
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('t')  ! Tag (lowercase)
-                call tag_prompt()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call tag_prompt()
+                    needs_full_redraw = .true.
+                end if
             case ('b')  ! Switch branch
-                call branch_switch_prompt()
-                ! Refresh files after branch switch
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Update branch name display
-                call get_repo_info(repo_name, branch_name)
+                if (mode == 'git') then
+                    call branch_switch_prompt()
+                    ! Refresh files after branch switch
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Update branch name display
+                    call get_repo_info(repo_name, branch_name)
+                end if
             case ('n')  ! Create new branch
-                call branch_create_prompt()
-                ! Refresh files after branch creation
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Update branch name display
-                call get_repo_info(repo_name, branch_name)
+                if (mode == 'git') then
+                    call branch_create_prompt()
+                    ! Refresh files after branch creation
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Update branch name display
+                    call get_repo_info(repo_name, branch_name)
+                end if
             case ('R')  ! Delete branch (Shift+r, since 'r' is used for delete file)
-                call branch_delete_prompt()
-                needs_full_redraw = .true.
-                ! No need to refresh files or update branch name (stays on current branch)
-            case ('f')  ! Git fetch
-                call git_fetch()
-                ! Refresh files after fetch and include files with incoming changes
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
+                if (mode == 'git') then
+                    call branch_delete_prompt()
                     needs_full_redraw = .true.
+                    ! No need to refresh files or update branch name (stays on current branch)
+                end if
+            case ('f')  ! Git fetch
+                if (mode == 'git') then
+                    call git_fetch()
+                    ! Refresh files after fetch and include files with incoming changes
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('d')  ! Git diff with less
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
                     needs_full_redraw = .true.
                 end if
             case ('c')  ! View file contents (cat/bat/less)
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call view_file(items(selected)%path)
                     needs_full_redraw = .true.
                 end if
             case ('w')  ! Git blame (who changed this line)
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call blame_prompt(items(selected)%path)
                     needs_full_redraw = .true.
                 end if
             case ('r')  ! Remove/delete file
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call delete_prompt(items(selected)%path, items(selected)%is_untracked)
                     ! Refresh files after delete
                     call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
@@ -419,7 +470,7 @@ contains
                     needs_full_redraw = .true.
                 end if
             case ('x', 'X')  ! Discard changes
-                if (items(selected)%is_file .and. (items(selected)%is_staged .or. items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
+                if (mode == 'git' .and. items(selected)%is_file .and. (items(selected)%is_staged .or. items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call discard_prompt(items(selected)%path, items(selected)%is_staged, items(selected)%is_untracked)
                     ! Refresh files after discard
                     call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
@@ -427,63 +478,83 @@ contains
                     needs_full_redraw = .true.
                 end if
             case ('l')  ! Git pull
-                call git_pull()
-                ! Refresh files after pull (incoming indicators will automatically clear)
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Note: After successful pull, git diff will show no upstream differences
-                ! so has_incoming will be .false. for all files automatically
+                if (mode == 'git') then
+                    call git_pull()
+                    ! Refresh files after pull (incoming indicators will automatically clear)
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Note: After successful pull, git diff will show no upstream differences
+                    ! so has_incoming will be .false. for all files automatically
+                end if
             case ('z')  ! Stash push (save changes)
-                call stash_push_prompt()
-                ! Refresh files after stash
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call stash_push_prompt()
+                    ! Refresh files after stash
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('Z')  ! Stash pop/apply (restore changes)
-                call stash_pop_apply_prompt()
-                ! Refresh files after stash pop/apply
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call stash_pop_apply_prompt()
+                    ! Refresh files after stash pop/apply
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('y')  ! Cherry-pick (yank commit)
-                call cherry_pick_prompt()
-                ! Refresh files after cherry-pick
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call cherry_pick_prompt()
+                    ! Refresh files after cherry-pick
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('v')  ! Revert commit
-                call revert_commit_prompt()
-                ! Refresh files after revert
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call revert_commit_prompt()
+                    ! Refresh files after revert
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('h')  ! Show commit history
-                call history_browser_prompt()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call history_browser_prompt()
+                    needs_full_redraw = .true.
+                end if
             case ('L')  ! Show reflog (Shift+l)
-                call reflog_browser_prompt()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call reflog_browser_prompt()
+                    needs_full_redraw = .true.
+                end if
             case ('G')  ! Merge branch (Shift+g)
-                call merge_branch_prompt()
-                ! Refresh files after merge
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Update branch name display in case we merged
-                call get_repo_info(repo_name, branch_name)
+                if (mode == 'git') then
+                    call merge_branch_prompt()
+                    ! Refresh files after merge
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Update branch name display in case we merged
+                    call get_repo_info(repo_name, branch_name)
+                end if
             case ('O')  ! Reset (Shift+o - "Oh no, undo!")
-                call reset_prompt()
-                ! Refresh files after reset
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call reset_prompt()
+                    ! Refresh files after reset
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('I')  ! Interactive rebase (Shift+i)
-                call rebase_prompt()
-                ! Refresh files after rebase
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call rebase_prompt()
+                    ! Refresh files after rebase
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('.')  ! Toggle hiding dotfiles and gitignored files
                 hide_dotfiles = .not. hide_dotfiles
                 ! Rebuild item list with new filter
@@ -497,8 +568,15 @@ contains
                 visible_items = term_height - top_padding - 6
                 if (visible_items < 3) visible_items = 3
                 if (visible_items > n_items) visible_items = n_items
-            case ('q', 'Q')  ! Quit
-                running = .false.
+            case ('q', 'Q')  ! Quit or exit git mode
+                if (mode == 'git') then
+                    ! In git mode: q exits to normal mode
+                    mode = 'normal'
+                    needs_full_redraw = .true.
+                else
+                    ! In normal mode: q quits the application
+                    running = .false.
+                end if
             end select
         end do
 

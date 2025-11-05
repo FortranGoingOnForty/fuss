@@ -67,11 +67,21 @@ contains
         ! Read one character
         read(tty_unit, '(A1)', iostat=iostat, advance='no') key
 
-        ! Check for escape sequence (arrow keys)
+        ! Check for escape sequence (arrow keys or alt-key combos)
         if (key == achar(27)) then
             read(tty_unit, '(A2)', iostat=iostat, advance='no') escape_seq
             if (escape_seq(1:1) == '[') then
+                ! Arrow key sequence: ESC[A/B/C/D
                 key = escape_seq(2:2)  ! Return A, B, C, or D
+            else if (escape_seq(1:1) >= 'a' .and. escape_seq(1:1) <= 'z') then
+                ! Alt-letter sequence: ESC followed by letter
+                ! Encode as ASCII control characters (1-26 for alt-a through alt-z)
+                ! This keeps us in valid ASCII range [0-127]
+                ! e.g., alt-g returns achar(7) = ASCII BEL
+                key = achar(1 + ichar(escape_seq(1:1)) - ichar('a'))
+            else if (iostat /= 0) then
+                ! Just ESC key alone (no following character or timeout)
+                key = achar(27)
             end if
         end if
 
