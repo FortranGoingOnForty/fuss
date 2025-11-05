@@ -465,24 +465,26 @@ contains
                         needs_full_redraw = .true.
                     end if
                     cycle
-                ! NOTE: Arrow keys (after escape processing) are indistinguishable from uppercase A/B/C/D
-                ! Trade-off: Prioritize arrow functionality over uppercase C/D letters
-                ! Uppercase A/B work fine, C/D reserved for arrows
-                else if (key == 'C') then
-                    ! Right arrow - move cursor right (also blocks uppercase C)
+                ! Arrow keys are now encoded as control codes: Up=28, Down=29, Right=30, Left=31
+                ! This allows uppercase C and D to work in rename mode
+                else if (key == achar(30)) then
+                    ! Right arrow - move cursor right
                     if (rename_cursor_pos < len_trim(rename_buffer)) then
                         rename_cursor_pos = rename_cursor_pos + 1
                         needs_full_redraw = .true.
                     end if
                     cycle
-                else if (key == 'D') then
-                    ! Left arrow - move cursor left (also blocks uppercase D)
+                else if (key == achar(31)) then
+                    ! Left arrow - move cursor left
                     if (rename_cursor_pos > 0) then
                         rename_cursor_pos = rename_cursor_pos - 1
                         needs_full_redraw = .true.
                     end if
                     cycle
-                ! A and B (up/down arrows) are allowed as uppercase letters - arrows ignored
+                ! Up/Down arrows (28, 29) are ignored in rename mode
+                else if (key == achar(28) .or. key == achar(29)) then
+                    ! Ignore up/down arrows in rename mode
+                    cycle
                 else if ((key >= 'a' .and. key <= 'z') .or. &
                          (key >= 'A' .and. key <= 'Z') .or. &
                          (key >= '0' .and. key <= '9') .or. &
@@ -507,10 +509,10 @@ contains
             end if
 
             ! Fuzzy search in normal mode - handle any printable character
-            ! Exclude A, B, C, D since those are arrow key codes after escape sequence processing
+            ! Arrow keys are now control codes (28-31), so all letters A-Z work in search
             if (mode == 'normal') then
                 if ((key >= 'a' .and. key <= 'z') .or. &
-                    ((key >= 'E' .and. key <= 'Z') .or. (key >= '0' .and. key <= '9')) .or. &
+                    ((key >= 'A' .and. key <= 'Z') .or. (key >= '0' .and. key <= '9')) .or. &
                     key == '_' .or. key == '-' .or. key == '.') then
 
                     ! Check if timeout elapsed since last keypress - if so, start fresh search
@@ -558,36 +560,42 @@ contains
             end if
 
             ! Handle input
-            select case (key)
-            case ('j', 'B')  ! j or down arrow - navigate to next sibling (skip nested items)
+            ! Note: Arrow keys are now control codes (28-31), checked with if-else before select case
+            if (key == 'j' .or. key == achar(29)) then
+                ! j or down arrow (29) - navigate to next sibling (skip nested items)
                 ! Clear search buffer on navigation
                 if (search_length > 0) then
                     search_length = 0
                     search_buffer = ''
                 end if
                 call navigate_down(items, n_items, selected)
-            case ('k', 'A')  ! k or up arrow - navigate to previous sibling (skip nested items)
+            else if (key == 'k' .or. key == achar(28)) then
+                ! k or up arrow (28) - navigate to previous sibling (skip nested items)
                 ! Clear search buffer on navigation
                 if (search_length > 0) then
                     search_length = 0
                     search_buffer = ''
                 end if
                 call navigate_up(items, n_items, selected)
-            case ('D')  ! Left arrow - navigate to parent directory
+            else if (key == achar(31)) then
+                ! Left arrow (31) - navigate to parent directory
                 ! Clear search buffer on navigation
                 if (search_length > 0) then
                     search_length = 0
                     search_buffer = ''
                 end if
                 call navigate_left(items, n_items, selected)
-            case ('C')  ! Right arrow - enter directory
+            else if (key == achar(30)) then
+                ! Right arrow (30) - enter directory
                 ! Clear search buffer on navigation
                 if (search_length > 0) then
                     search_length = 0
                     search_buffer = ''
                 end if
                 call navigate_right(items, n_items, selected, tree_root, hide_dotfiles)
-            case (' ')  ! Space bar - toggle expand/collapse
+            else
+                select case (key)
+                case (' ')  ! Space bar - toggle expand/collapse
                 ! Clear search buffer on navigation
                 if (search_length > 0) then
                     search_length = 0
@@ -848,6 +856,7 @@ contains
                 ! Unhandled keys - do nothing
                 continue
             end select
+            end if  ! End of arrow key if-else chain
         end do
 
         ! Restore terminal to normal state

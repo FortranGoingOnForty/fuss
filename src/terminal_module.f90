@@ -132,7 +132,7 @@ contains
 
     subroutine read_key(key)
         character(len=1), intent(out) :: key
-        character(len=3) :: escape_seq
+        character(len=1) :: next_char
         integer :: iostat, tty_unit
 
         ! Open /dev/tty for reading
@@ -147,21 +147,40 @@ contains
 
         ! Check for escape sequence (arrow keys or alt-key combos)
         if (key == achar(27)) then
-            ! Read just the first character after ESC
-            read(tty_unit, '(A1)', iostat=iostat, advance='no') escape_seq(1:1)
+            ! Detected ESC - try to read next char (non-blocking check)
+            read(tty_unit, '(A1)', iostat=iostat, advance='no') next_char
 
-            if (escape_seq(1:1) == '[') then
-                ! Arrow key sequence: ESC[A/B/C/D - need to read one more char
-                read(tty_unit, '(A1)', iostat=iostat, advance='no') escape_seq(2:2)
-                key = escape_seq(2:2)  ! Return A, B, C, or D
-            else if (escape_seq(1:1) >= 'a' .and. escape_seq(1:1) <= 'z') then
-                ! Alt-letter sequence: ESC followed by letter
-                ! Encode as ASCII control characters (1-26 for alt-a through alt-z)
-                ! This keeps us in valid ASCII range [0-127]
-                ! e.g., alt-g returns achar(7) = ASCII BEL
-                key = achar(1 + ichar(escape_seq(1:1)) - ichar('a'))
-            else if (iostat /= 0) then
-                ! Just ESC key alone (no following character or timeout)
+            if (iostat == 0) then
+                ! Got a character after ESC
+                if (next_char == '[') then
+                    ! Arrow key sequence: ESC[A/B/C/D - read final character
+                    read(tty_unit, '(A1)', iostat=iostat, advance='no') next_char
+                    if (iostat == 0) then
+                        ! Encode arrow keys as unique control codes to avoid conflict with uppercase letters
+                        ! Up=28, Down=29, Right=30, Left=31
+                        if (next_char == 'A') then
+                            key = achar(28)  ! Up arrow
+                        else if (next_char == 'B') then
+                            key = achar(29)  ! Down arrow
+                        else if (next_char == 'C') then
+                            key = achar(30)  ! Right arrow
+                        else if (next_char == 'D') then
+                            key = achar(31)  ! Left arrow
+                        else
+                            ! Unknown escape sequence, return ESC
+                            key = achar(27)
+                        end if
+                    end if
+                else if (next_char >= 'a' .and. next_char <= 'z') then
+                    ! Alt-letter sequence: ESC followed by lowercase letter
+                    ! Encode as ASCII control characters (1-26 for alt-a through alt-z)
+                    key = achar(1 + ichar(next_char) - ichar('a'))
+                else
+                    ! Unknown sequence after ESC, return ESC
+                    key = achar(27)
+                end if
+            else
+                ! No character available after ESC - it's just ESC key alone
                 key = achar(27)
             end if
         end if
