@@ -289,7 +289,6 @@ contains
         character(len=1024) :: line
         type(file_entry), allocatable :: dirty_files(:), temp_files(:)
         integer :: n_dirty, max_files
-        logical :: is_dirty_file
 
         ! First get dirty files
         call get_dirty_files(dirty_files, n_dirty)
@@ -929,7 +928,7 @@ contains
         ! Adds files with incoming changes that aren't already in the dirty files list
         type(file_entry), allocatable, intent(inout) :: files(:)
         integer, intent(inout) :: n_files
-        integer :: iostat, unit_num, status_code, i, j
+        integer :: iostat, unit_num, status_code, i
         character(len=1024) :: line
         character(len=512) :: incoming_path
         logical :: already_exists

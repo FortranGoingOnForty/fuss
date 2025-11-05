@@ -21,7 +21,7 @@ program fuss
     if (interactive) then
         call interactive_mode(show_all)
     else
-        call build_and_display_tree(root_path, show_all)
+        call build_and_display_tree(show_all)
     end if
 
 contains
@@ -126,8 +126,7 @@ contains
         path = trim(buffer)
     end subroutine get_current_dir
 
-    subroutine build_and_display_tree(root_path, show_all)
-        character(len=*), intent(in) :: root_path
+    subroutine build_and_display_tree(show_all)
         logical, intent(in) :: show_all
         type(file_entry), allocatable :: files(:)
         integer :: n_files
@@ -155,7 +154,7 @@ contains
         logical, intent(in) :: show_all
         type(file_entry), allocatable :: files(:)
         type(selectable_item), allocatable :: items(:)
-        integer :: n_files, n_items, selected, i, status
+        integer :: n_files, n_items, selected
         character(len=1) :: key
         logical :: running, hide_dotfiles
         character(len=256) :: repo_name, branch_name, term_program
@@ -253,7 +252,7 @@ contains
             case ('k', 'A')  ! k or up arrow - navigate to previous sibling (skip nested items)
                 call navigate_up(items, n_items, selected)
             case ('D')  ! Left arrow - navigate to parent directory
-                call navigate_left(items, n_items, selected, tree_root)
+                call navigate_left(items, n_items, selected)
             case ('C')  ! Right arrow - enter directory
                 call navigate_right(items, n_items, selected, tree_root, hide_dotfiles)
             case (' ')  ! Space bar - toggle expand/collapse
@@ -547,7 +546,7 @@ contains
 
         ! Final display
         call clear_screen()
-        call build_and_display_tree('', show_all)
+        call build_and_display_tree(show_all)
     end subroutine interactive_mode
 
     subroutine build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
@@ -952,11 +951,10 @@ contains
         ! No children - stay on directory
     end subroutine navigate_right
 
-    subroutine navigate_left(items, n_items, selected, tree_root)
+    subroutine navigate_left(items, n_items, selected)
         type(selectable_item), allocatable, intent(inout) :: items(:)
         integer, intent(inout) :: n_items
         integer, intent(inout) :: selected
-        type(tree_node), pointer, intent(in) :: tree_root
         integer :: i, target_depth
 
         if (n_items == 0) return
