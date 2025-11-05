@@ -1,5 +1,6 @@
 program fuss
     use iso_fortran_env, only: error_unit
+    use version_module
     use types_module
     use git_module
     use tree_module
@@ -72,7 +73,7 @@ contains
     end subroutine parse_arguments
 
     subroutine print_version()
-        print '(A)', 'fuss v1.0.0'
+        print '(A,A)', 'fuss v', trim(VERSION)
         print '(A)', ''
         print '(A)', 'A git staging tool. Written in Fortran, for some reason.'
         print '(A)', 'https://github.com/FortranGoingOnForty/fuss'
