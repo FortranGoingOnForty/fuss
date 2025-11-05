@@ -129,12 +129,14 @@ contains
     end subroutine print_tree_node
 
     subroutine draw_interactive_tree(tree_root, items, n_items, selected, &
-                                     repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                                     repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                     in_rename_mode, rename_buffer, rename_cursor_pos)
         type(tree_node), pointer, intent(in) :: tree_root
         integer, intent(in) :: n_items, selected
         type(selectable_item), intent(in) :: items(:)
-        character(len=*), intent(in) :: repo_name, branch_name, mode
-        integer, intent(in) :: viewport_offset, visible_items, top_padding
+        character(len=*), intent(in) :: repo_name, branch_name, mode, rename_buffer
+        integer, intent(in) :: viewport_offset, visible_items, top_padding, rename_cursor_pos
+        logical, intent(in) :: in_rename_mode
         integer :: item_idx, viewport_end, i
         character(len=512) :: status_line
 
@@ -172,36 +174,39 @@ contains
         item_idx = 0
         print '(A)', '.'
         call print_interactive_node(tree_root, '', .true., .true., items, selected, &
-                                    item_idx, viewport_offset, viewport_end)
+                                    item_idx, viewport_offset, viewport_end, in_rename_mode, rename_buffer, rename_cursor_pos)
 
-        ! Print help (mode-dependent)
+        ! Print help (mode and rename state dependent)
         print '(A)', ''
-        if (mode == 'git') then
+        if (in_rename_mode) then
+            ! Rename mode help - show in cyan
+            print '(A)', achar(27) // '[36mRENAME MODE: Type new name | ←/→:move cursor | Backspace:delete | Enter/Tab:confirm | ESC:cancel' // achar(27) // '[0m'
+        else if (mode == 'git') then
             ! Git mode help - show in yellow tint
             print '(A)', achar(27) // '[33mLegend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
                          achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                          achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
                          achar(27) // '[34m↓' // achar(27) // '[0m=incoming' // achar(27) // '[0m'
-            print '(A)', achar(27) // '[33mKeys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | G:merge | O:reset | I:rebase | f:fetch | d:diff | c/alt-v:view | w:blame | h:history | L:reflog | y:cherry-pick | v:revert | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s/alt-s:status | q:exit-mode | ESC:exit-mode | ctrl-c:quit' // achar(27) // '[0m'
+            print '(A)', achar(27) // '[33mKeys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | alt-n:rename | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | G:merge | O:reset | I:rebase | f:fetch | d:diff | c/alt-v:view | w:blame | h:history | L:reflog | y:cherry-pick | v:revert | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s/alt-s:status | q:exit-mode | ESC:exit-mode | ctrl-c:quit' // achar(27) // '[0m'
         else
             ! Normal mode help
             print '(A)', 'Legend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &
                          achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                          achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
                          achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
-            print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | alt-v:view | alt-s:status | alt-g:git-mode | ctrl-c:quit'
+            print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | alt-n:rename | alt-v:view | alt-s:status | alt-g:git-mode | ctrl-c:quit'
         end if
 
         ! Don't free tree - it's owned by interactive_mode
     end subroutine draw_interactive_tree
 
     recursive subroutine print_interactive_node(node, prefix, is_last, is_root, items, selected, &
-                                                item_idx, viewport_offset, viewport_end)
+                                                item_idx, viewport_offset, viewport_end, in_rename_mode, rename_buffer, rename_cursor_pos)
         type(tree_node), pointer, intent(in) :: node
-        character(len=*), intent(in) :: prefix
-        logical, intent(in) :: is_last, is_root
+        character(len=*), intent(in) :: prefix, rename_buffer
+        logical, intent(in) :: is_last, is_root, in_rename_mode
         type(selectable_item), intent(in) :: items(:)
-        integer, intent(in) :: selected, viewport_offset, viewport_end
+        integer, intent(in) :: selected, viewport_offset, viewport_end, rename_cursor_pos
         integer, intent(inout) :: item_idx
 
         character(len=1024) :: line
@@ -262,24 +267,41 @@ contains
 
                 ! Add name with highlighting if selected
                 if (is_selected) then
-                    if (node%is_gitignored) then
-                        line = trim(line) // highlight_on // ESC // '[90m' // trim(node%name) // ESC // '[0m'
+                    ! Special handling for rename mode
+                    if (in_rename_mode) then
+                        ! Show editable name with cursor at correct position
+                        if (rename_cursor_pos == len_trim(rename_buffer)) then
+                            ! Cursor at end
+                            line = trim(line) // highlight_on // trim(rename_buffer) // '█' // highlight_off
+                        else if (rename_cursor_pos == 0) then
+                            ! Cursor at beginning
+                            line = trim(line) // highlight_on // '█' // trim(rename_buffer) // highlight_off
+                        else
+                            ! Cursor in middle
+                            line = trim(line) // highlight_on // rename_buffer(1:rename_cursor_pos) // '█' // &
+                                   rename_buffer(rename_cursor_pos+1:len_trim(rename_buffer)) // highlight_off
+                        end if
                     else
-                        line = trim(line) // highlight_on // trim(node%name)
+                        ! Normal selection highlighting
+                        if (node%is_gitignored) then
+                            line = trim(line) // highlight_on // ESC // '[90m' // trim(node%name) // ESC // '[0m'
+                        else
+                            line = trim(line) // highlight_on // trim(node%name)
+                        end if
+                        if (node%is_staged) then
+                            line = trim(line) // trim(mark_staged)
+                        end if
+                        if (node%is_unstaged) then
+                            line = trim(line) // trim(mark_unstaged)
+                        end if
+                        if (node%is_untracked) then
+                            line = trim(line) // trim(mark_untracked)
+                        end if
+                        if (node%has_incoming) then
+                            line = trim(line) // trim(mark_incoming)
+                        end if
+                        line = trim(line) // highlight_off
                     end if
-                    if (node%is_staged) then
-                        line = trim(line) // trim(mark_staged)
-                    end if
-                    if (node%is_unstaged) then
-                        line = trim(line) // trim(mark_unstaged)
-                    end if
-                    if (node%is_untracked) then
-                        line = trim(line) // trim(mark_untracked)
-                    end if
-                    if (node%has_incoming) then
-                        line = trim(line) // trim(mark_incoming)
-                    end if
-                    line = trim(line) // highlight_off
                 else
                     if (node%is_gitignored) then
                         line = trim(line) // ESC // '[90m' // trim(node%name) // ESC // '[0m'
@@ -322,7 +344,7 @@ contains
                 end if
 
                 call print_interactive_node(child, new_prefix, i == n_children, .false., items, selected, &
-                                        item_idx, viewport_offset, viewport_end)
+                                        item_idx, viewport_offset, viewport_end, in_rename_mode, rename_buffer, rename_cursor_pos)
                 child => child%next_sibling
             end do
         end if
