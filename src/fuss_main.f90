@@ -1859,7 +1859,8 @@ contains
         ! Execute file/directory rename
         character(len=*), intent(in) :: old_path, new_name
         character(len=1024) :: dirname, new_path, command, old_path_lower, new_path_lower
-        integer :: status, last_slash
+        character(len=1024) :: old_basename, new_basename
+        integer :: status, last_slash, old_last_slash, new_last_slash
         logical :: file_exists, case_only_change
 
         ! Validate new name
@@ -1885,11 +1886,39 @@ contains
         end if
 
         ! Check if this is a case-only change (for case-insensitive filesystems like macOS)
-        old_path_lower = old_path
-        new_path_lower = new_path
+        ! Extract just the basename (filename) for comparison to avoid path prefix issues
+        old_last_slash = index(old_path, '/', back=.true.)
+        new_last_slash = index(new_path, '/', back=.true.)
+
+        if (old_last_slash > 0) then
+            old_basename = old_path(old_last_slash+1:)
+        else
+            old_basename = old_path
+        end if
+
+        if (new_last_slash > 0) then
+            new_basename = new_path(new_last_slash+1:)
+        else
+            new_basename = new_path
+        end if
+
+        ! Now compare the basenames in lowercase
+        old_path_lower = old_basename
+        new_path_lower = new_basename
         call to_lowercase(old_path_lower)
         call to_lowercase(new_path_lower)
         case_only_change = (trim(old_path_lower) == trim(new_path_lower))
+
+        ! Debug logging
+        open(99, file='/tmp/fuss_debug.log', position='append')
+        write(99, '(A,A)') 'RENAME: old_path = ', trim(old_path)
+        write(99, '(A,A)') 'RENAME: new_path = ', trim(new_path)
+        write(99, '(A,A)') 'RENAME: old_basename = ', trim(old_basename)
+        write(99, '(A,A)') 'RENAME: new_basename = ', trim(new_basename)
+        write(99, '(A,A)') 'RENAME: old_path_lower = ', trim(old_path_lower)
+        write(99, '(A,A)') 'RENAME: new_path_lower = ', trim(new_path_lower)
+        write(99, '(A,L)') 'RENAME: case_only_change = ', case_only_change
+        close(99)
 
         ! Check if new path already exists (skip check for case-only changes)
         if (.not. case_only_change) then
