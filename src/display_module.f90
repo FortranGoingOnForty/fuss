@@ -180,7 +180,7 @@ contains
         print '(A)', ''
         if (in_rename_mode) then
             ! Rename mode help - show in cyan
-            print '(A)', achar(27) // '[36mRENAME MODE: Type name (all letters/numbers ok) | ←/→:cursor | Backspace:del | Tab:save | ESC:cancel' // achar(27) // '[0m'
+            print '(A)', achar(27) // '[36mRENAME MODE: [a-zA-Z0-9._- ] | ←/→:cursor | Backspace:del | Tab:save | ESC:cancel' // achar(27) // '[0m'
         else if (mode == 'git') then
             ! Git mode help - show in yellow tint
             print '(A)', achar(27) // '[33mLegend: ' // achar(27) // '[32m↑' // achar(27) // '[0m=staged ' // &

@@ -132,82 +132,60 @@ contains
 
     subroutine read_key(key)
         character(len=1), intent(out) :: key
-        integer :: status, unit_num, iostat
-        character(len=256) :: cmd
+        character(len=1) :: next_char
+        integer :: iostat, tty_unit
 
-        ! Use bash with timeout to read a character (avoids blocking on ESC)
-        ! This prevents the ESC key from requiring a second keypress
-        write(cmd, '(A)') 'bash -c "read -t 0.1 -n 1 -s key < /dev/tty && echo -n $key" > ' // FUSS_TEMP // ' 2>/dev/null'
-        call execute_command_line(trim(cmd), exitstat=status)
-
-        if (status /= 0) then
-            ! Timeout or error - treat as quit
-            key = 'q'
-            return
-        end if
-
-        ! Read the character from temp file
-        open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+        ! Open /dev/tty for reading
+        open(newunit=tty_unit, file='/dev/tty', status='old', action='read', iostat=iostat)
         if (iostat /= 0) then
-            key = 'q'
+            key = 'q'  ! If we can't open tty, quit
             return
         end if
-        read(unit_num, '(A1)', iostat=iostat) key
-        close(unit_num, status='delete')
 
-        if (iostat /= 0) then
-            key = 'q'
-            return
-        end if
+        ! Read one character
+        read(tty_unit, '(A1)', iostat=iostat, advance='no') key
 
         ! Check for escape sequence (arrow keys or alt-key combos)
         if (key == achar(27)) then
-            ! Detected ESC - try to read next char quickly with timeout
-            write(cmd, '(A)') 'bash -c "read -t 0.05 -n 1 -s key < /dev/tty && echo -n $key" > ' // &
-                              FUSS_TEMP // ' 2>/dev/null'
-            call execute_command_line(trim(cmd), exitstat=status)
+            ! Detected ESC - try to read next char (non-blocking check)
+            read(tty_unit, '(A1)', iostat=iostat, advance='no') next_char
 
-            if (status == 0) then
-                ! Got a following character - check what it is
-                open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
-                if (iostat == 0) then
-                    read(unit_num, '(A1)', iostat=iostat) key
-                    close(unit_num, status='delete')
-
-                    ! Check for arrow keys (ESC [ A/B/C/D) or alt-keys (ESC letter)
-                    if (key == '[') then
-                        ! Arrow key sequence - read final character
-                        write(cmd, '(A)') 'bash -c "read -t 0.05 -n 1 -s key < /dev/tty && echo -n $key" > ' // &
-                                          FUSS_TEMP // ' 2>/dev/null'
-                        call execute_command_line(trim(cmd), exitstat=status)
-                        if (status == 0) then
-                            open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
-                            if (iostat == 0) then
-                                read(unit_num, '(A1)', iostat=iostat) key
-                                close(unit_num, status='delete')
-                                ! Encode arrow keys as unique control codes to avoid conflict with uppercase letters
-                                ! Up=28, Down=29, Right=30, Left=31
-                                if (key == 'A') then
-                                    key = achar(28)  ! Up arrow
-                                else if (key == 'B') then
-                                    key = achar(29)  ! Down arrow
-                                else if (key == 'C') then
-                                    key = achar(30)  ! Right arrow
-                                else if (key == 'D') then
-                                    key = achar(31)  ! Left arrow
-                                end if
-                            end if
+            if (iostat == 0) then
+                ! Got a character after ESC
+                if (next_char == '[') then
+                    ! Arrow key sequence: ESC[A/B/C/D - read final character
+                    read(tty_unit, '(A1)', iostat=iostat, advance='no') next_char
+                    if (iostat == 0) then
+                        ! Encode arrow keys as unique control codes to avoid conflict with uppercase letters
+                        ! Up=28, Down=29, Right=30, Left=31
+                        if (next_char == 'A') then
+                            key = achar(28)  ! Up arrow
+                        else if (next_char == 'B') then
+                            key = achar(29)  ! Down arrow
+                        else if (next_char == 'C') then
+                            key = achar(30)  ! Right arrow
+                        else if (next_char == 'D') then
+                            key = achar(31)  ! Left arrow
+                        else
+                            ! Unknown escape sequence, return ESC
+                            key = achar(27)
                         end if
-                    else if (key >= 'a' .and. key <= 'z') then
-                        ! Alt-letter: encode as control char (1-26 for alt-a through alt-z)
-                        key = achar(1 + ichar(key) - ichar('a'))
                     end if
+                else if (next_char >= 'a' .and. next_char <= 'z') then
+                    ! Alt-letter sequence: ESC followed by lowercase letter
+                    ! Encode as ASCII control characters (1-26 for alt-a through alt-z)
+                    key = achar(1 + ichar(next_char) - ichar('a'))
+                else
+                    ! Unknown sequence after ESC, return ESC
+                    key = achar(27)
                 end if
             else
-                ! Just ESC alone (timeout, no following character)
+                ! No character available after ESC - it's just ESC key alone
                 key = achar(27)
             end if
         end if
+
+        close(tty_unit)
     end subroutine read_key
 
     subroutine read_line(prompt, line)
