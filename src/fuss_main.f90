@@ -86,6 +86,7 @@ contains
         print '(A)', '        c               View file contents (bat/less/cat)'
         print '(A)', '        w               Git blame (who changed this line)'
         print '(A)', '        h               Browse commit history (detailed/oneline)'
+        print '(A)', '        L               Browse reflog (recover lost commits)'
         print '(A)', '        y               Cherry-pick commit from branch'
         print '(A)', '        v               Revert commit (safe undo)'
         print '(A)', '        x               Discard changes'
@@ -96,6 +97,7 @@ contains
         print '(A)', '        R               Delete branch'
         print '(A)', '        G               Merge branch into current'
         print '(A)', '        O               Reset to commit (soft/mixed/hard)'
+        print '(A)', '        I               Interactive rebase (reorder/squash commits)'
         print '(A)', '        z               Stash changes'
         print '(A)', '        Z               Unstash/pop changes'
         print '(A)', ''
@@ -513,6 +515,9 @@ contains
             case ('h')  ! Show commit history
                 call history_browser_prompt()
                 ! No refresh needed - read-only
+            case ('L')  ! Show reflog (Shift+l)
+                call reflog_browser_prompt()
+                ! No refresh needed - read-only
             case ('G')  ! Merge branch (Shift+g)
                 call merge_branch_prompt()
                 ! Refresh files after merge
@@ -529,6 +534,17 @@ contains
             case ('O')  ! Reset (Shift+o - "Oh no, undo!")
                 call reset_prompt()
                 ! Refresh files after reset
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('I')  ! Interactive rebase (Shift+i)
+                call rebase_prompt()
+                ! Refresh files after rebase
                 if (show_all) then
                     call get_all_files(files, n_files)
                 else
@@ -1235,6 +1251,14 @@ contains
         call git_show_history()
     end subroutine history_browser_prompt
 
+    subroutine reflog_browser_prompt()
+        ! Clear screen for reflog browser
+        call clear_screen()
+
+        ! Call git reflog browser (handles its own terminal setup)
+        call git_show_reflog()
+    end subroutine reflog_browser_prompt
+
     subroutine merge_branch_prompt()
         logical :: success
 
@@ -1264,6 +1288,16 @@ contains
         ! Call git reset (handles its own prompts and key wait)
         call git_reset_interactive(success)
     end subroutine reset_prompt
+
+    subroutine rebase_prompt()
+        logical :: success
+
+        ! Clear screen for rebase
+        call clear_screen()
+
+        ! Call git rebase (handles its own prompts and key wait)
+        call git_interactive_rebase(success)
+    end subroutine rebase_prompt
 
     subroutine branch_create_prompt()
         character(len=512) :: branch_name

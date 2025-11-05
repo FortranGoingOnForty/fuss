@@ -2182,4 +2182,137 @@ contains
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine git_reset_interactive
 
+    subroutine git_show_reflog()
+        integer :: status_code, status
+        character(len=4096) :: command
+        character(len=1) :: q, sq
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Set up quote characters
+        q = achar(34)   ! double quote "
+        sq = achar(39)  ! single quote '
+
+        ! Start with detailed view, allow switching with 1/2/3
+        ! Detailed format: HEAD@{n} hash - action
+        command = 'git reflog --format=' // sq // '%gd %h - (%ar) %gs' // sq // ' | ' // &
+                  'fzf --ansi --height=100% --border=rounded ' // &
+                  '--border-label=' // q // ' Reflog - Press 1:detailed 2:oneline 3:all ESC:close ' // q // ' ' // &
+                  '--prompt=' // q // 'Reflog: ' // q // ' ' // &
+                  '--header=' // q // 'Switch views: 1=detailed  2=oneline  3=all-reflogs' // q // ' ' // &
+                  '--preview=' // q // 'echo {} | grep -o ' // sq // '[0-9a-f]\{7,\}' // sq // &
+                  ' | head -1 | xargs git show --color=always' // q // ' ' // &
+                  '--preview-window=right:60% ' // &
+                  '--bind=' // q // '1:reload(git reflog --format=' // sq // '%gd %h - (%ar) %gs' // sq // ')' // q // ' ' // &
+                  '--bind=' // q // '2:reload(git reflog --oneline)' // q // ' ' // &
+                  '--bind=' // q // '3:reload(git reflog show --all --format=' // sq // '%gd %h - (%ar) %gs' // sq // ')' // q // ' ' // &
+                  '> /dev/null'
+
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_show_reflog
+
+    subroutine git_interactive_rebase(success)
+        logical, intent(out) :: success
+        integer :: status_code, status
+        character(len=512) :: selected_commit
+        character(len=2048) :: command
+
+        success = .false.
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        ! Check if we have unpushed commits
+        call execute_command_line('git log @{upstream}.. --oneline > /dev/null 2>&1', exitstat=status_code)
+        if (status_code /= 0) then
+            print '(A)', achar(27) // '[33mWarning: No upstream branch configured' // achar(27) // '[0m'
+            print '(A)', 'Rebasing without checking if commits are pushed.'
+            print '(A)', ''
+        end if
+
+        ! Select base commit for rebase
+        print '(A)', achar(27) // '[1mInteractive Rebase' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', achar(27) // '[33mWarning: Only rebase commits that have NOT been pushed!' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Select base commit (commits after this will be rebased):'
+        print '(A)', ''
+
+        call execute_command_line('git log --oneline --color=always -n 50 | ' // &
+                                  'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
+                                  '--prompt="Rebase from: " ' // &
+                                  '--preview="git log --oneline --color=always {1}~1..HEAD | head -20" ' // &
+                                  '--preview-window=right:60% ' // &
+                                  '--preview-label=" Commits that will be rebased " ' // &
+                                  '> /tmp/fuss_rebase_base.txt', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            print '(A)', 'Rebase cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Read selected commit
+        open(unit=99, file='/tmp/fuss_rebase_base.txt', status='old', action='read', iostat=status)
+        if (status /= 0) then
+            print '(A)', achar(27) // '[31m✗ Failed to read selection' // achar(27) // '[0m'
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+        read(99, '(A)', iostat=status) selected_commit
+        close(99)
+
+        ! Extract just the commit hash (first word)
+        read(selected_commit, *, iostat=status) selected_commit
+
+        ! Show what will be rebased
+        print '(A)', ''
+        print '(A)', achar(27) // '[1mCommits that will be rebased:' // achar(27) // '[0m'
+        write(command, '(A,A,A)') 'git log --oneline --color=always ', trim(selected_commit), '..HEAD'
+        call execute_command_line(trim(command), exitstat=status)
+
+        print '(A)', ''
+        print '(A)', 'Your editor will open with the rebase plan.'
+        print '(A)', 'Edit the file to reorder/squash/drop commits, then save and exit.'
+        print '(A)', ''
+        print '(A)', 'Press Enter to continue or Ctrl+C to cancel...'
+        call execute_command_line('read dummy < /dev/tty', exitstat=status)
+
+        ! Execute interactive rebase
+        ! Git will open the editor automatically
+        write(command, '(A,A)') 'git rebase -i ', trim(selected_commit)
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        if (status_code == 0) then
+            print '(A)', ''
+            print '(A)', achar(27) // '[32m✓ Rebase completed successfully!' // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', ''
+            print '(A)', achar(27) // '[31m✗ Rebase failed or was aborted' // achar(27) // '[0m'
+            print '(A)', ''
+            print '(A)', 'If you have conflicts:'
+            print '(A)', '  - Resolve conflicts in the files'
+            print '(A)', '  - git add <resolved files>'
+            print '(A)', '  - git rebase --continue'
+            print '(A)', ''
+            print '(A)', 'Or to abort: git rebase --abort'
+        end if
+
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
+        call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_interactive_rebase
+
 end module git_module
