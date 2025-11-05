@@ -187,10 +187,12 @@ contains
         ! Detect terminal type for padding (fixes WezTerm/Ghostty/iTerm top line cutoff)
         ! Alternate screen buffer needs more padding to prevent top cutoff
         call get_environment_variable("TERM_PROGRAM", term_program)
-        if (index(term_program, "WezTerm") > 0 .or. index(term_program, "ghostty") > 0) then
+        if (index(term_program, "iTerm") > 0) then
+            top_padding = 4  ! iTerm2 needs 4 lines in alternate screen
+        else if (index(term_program, "WezTerm") > 0 .or. index(term_program, "ghostty") > 0) then
             top_padding = 3  ! WezTerm/Ghostty need 3 lines in alternate screen
-        else if (index(term_program, "Apple_Terminal") > 0 .or. index(term_program, "iTerm") > 0) then
-            top_padding = 3  ! Terminal.app and iTerm2 also need 3 lines
+        else if (index(term_program, "Apple_Terminal") > 0) then
+            top_padding = 3  ! Terminal.app needs 3 lines
         else
             top_padding = 2  ! Other terminals need 2 lines
         end if
