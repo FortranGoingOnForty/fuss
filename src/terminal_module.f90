@@ -38,9 +38,9 @@ contains
 
     subroutine flush_stdin()
         integer :: status
-        ! Flush any buffered input from stdin using dd with non-blocking I/O
-        ! This prevents queued keypresses from being processed after long operations
-        call execute_command_line('dd if=/dev/tty of=/dev/null iflag=nonblock count=1 status=none 2>/dev/null', &
+        ! Flush any buffered input from stdin
+        ! Use a simple bash read with very short timeout to drain buffer without blocking
+        call execute_command_line('while read -t 0.001 -n 1 < /dev/tty 2>/dev/null; do :; done', &
                                   exitstat=status)
     end subroutine flush_stdin
 

@@ -860,7 +860,7 @@ contains
 
             ! Push with upstream configuration to origin
             print '(A)', 'No upstream configured. Pushing to origin/' // trim(current_branch) // '...'
-            write(command, '(A,A,A)') 'git push -u origin "', trim(current_branch), '" 2>&1'
+            write(command, '(A,A,A)') 'git push -u origin "', trim(current_branch), '"'
             call execute_command_line(trim(command), exitstat=status)
 
             if (status == 0) then
@@ -874,7 +874,7 @@ contains
         else
             ! Upstream exists - do regular push
             print '(A)', 'Pushing to upstream...'
-            call execute_command_line('git push 2>&1', exitstat=status)
+            call execute_command_line('git push', exitstat=status)
 
             if (status == 0) then
                 print '(A)', achar(27) // '[32m✓ Pushed successfully!' // achar(27) // '[0m'
@@ -1910,7 +1910,7 @@ contains
 
         ! Push specific tag to origin
         print '(A)', 'Pushing tag to origin...'
-        write(command, '(A,A,A)') 'git push origin "', trim(tag_name), '" 2>&1'
+        write(command, '(A,A,A)') 'git push origin "', trim(tag_name), '"'
         call execute_command_line(trim(command), exitstat=status)
 
         if (status == 0) then
