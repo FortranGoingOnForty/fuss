@@ -84,13 +84,16 @@ contains
         print '(A)', '        f               Fetch from remote'
         print '(A)', '        d               Show diff for file'
         print '(A)', '        c               View file contents (bat/less/cat)'
+        print '(A)', '        h               Browse commit history'
         print '(A)', '        y               Cherry-pick commit from branch'
+        print '(A)', '        v               Revert commit (safe undo)'
         print '(A)', '        x               Discard changes'
         print '(A)', ''
         print '(A)', '    Branches & Stash:'
         print '(A)', '        b               Switch branch'
         print '(A)', '        n               Create new branch'
         print '(A)', '        R               Delete branch'
+        print '(A)', '        G               Merge branch into current'
         print '(A)', '        z               Stash changes'
         print '(A)', '        Z               Unstash/pop changes'
         print '(A)', ''
@@ -491,6 +494,33 @@ contains
                 call mark_incoming_changes(files, n_files)
                 call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
                 if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('v')  ! Revert commit
+                call revert_commit_prompt()
+                ! Refresh files after revert
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+            case ('h')  ! Show commit history
+                call history_browser_prompt()
+                ! No refresh needed - read-only
+            case ('G')  ! Merge branch (Shift+g)
+                call merge_branch_prompt()
+                ! Refresh files after merge
+                if (show_all) then
+                    call get_all_files(files, n_files)
+                else
+                    call get_dirty_files(files, n_files)
+                end if
+                call mark_incoming_changes(files, n_files)
+                call build_item_list(files, n_files, items, n_items, tree_root, hide_dotfiles)
+                if (selected > n_items .and. n_items > 0) selected = n_items
+                ! Update branch name display in case we merged
+                call get_repo_info(repo_name, branch_name)
             case ('.')  ! Toggle hiding dotfiles and gitignored files
                 hide_dotfiles = .not. hide_dotfiles
                 ! Rebuild item list with new filter
@@ -1171,6 +1201,34 @@ contains
         ! Call git cherry-pick (handles its own prompts and key wait)
         call git_cherry_pick(success)
     end subroutine cherry_pick_prompt
+
+    subroutine revert_commit_prompt()
+        logical :: success
+
+        ! Clear screen for revert
+        call clear_screen()
+
+        ! Call git revert (handles its own prompts and key wait)
+        call git_revert_commit(success)
+    end subroutine revert_commit_prompt
+
+    subroutine history_browser_prompt()
+        ! Clear screen for history browser
+        call clear_screen()
+
+        ! Call git history browser (handles its own terminal setup)
+        call git_show_history()
+    end subroutine history_browser_prompt
+
+    subroutine merge_branch_prompt()
+        logical :: success
+
+        ! Clear screen for merge
+        call clear_screen()
+
+        ! Call git merge (handles its own prompts and key wait)
+        call git_merge_branch(success)
+    end subroutine merge_branch_prompt
 
     subroutine branch_create_prompt()
         character(len=512) :: branch_name

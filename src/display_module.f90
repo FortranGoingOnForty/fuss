@@ -169,7 +169,7 @@ contains
                      achar(27) // '[31m✗' // achar(27) // '[0m=modified ' // &
                      achar(27) // '[90m✗' // achar(27) // '[0m=untracked ' // &
                      achar(27) // '[34m↓' // achar(27) // '[0m=incoming'
-        print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | f:fetch | d:diff | c:view | y:cherry-pick | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s:status | q:quit'
+        print '(A)', 'Keys: j/k/↑/↓:nav | ←/→:nav tree | space:toggle | .:hide-dots | a:stage | u:unstage | S:stage-all | U:unstage-all | x:discard | z:stash | Z:unstash | b:switch | n:new-br | R:del-br | G:merge | f:fetch | d:diff | c:view | h:history | y:cherry-pick | v:revert | r:delete | l:pull | m:commit | M:amend | p:push | t:tag | s:status | q:quit'
 
         ! Don't free tree - it's owned by interactive_mode
     end subroutine draw_interactive_tree

@@ -1428,6 +1428,182 @@ contains
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine git_cherry_pick
 
+    subroutine git_revert_commit(success)
+        logical, intent(out) :: success
+        integer :: status_code, status
+        character(len=512) :: selected_commit
+        character(len=2048) :: command
+
+        success = .false.
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        print '(A)', achar(27) // '[1mRevert Commit' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Select commit to revert (creates a new commit that undoes changes):'
+        print '(A)', ''
+
+        ! Select commit from history
+        call execute_command_line('git log --oneline --color=always -n 100 | ' // &
+                                  'fzf --height=20 --border=rounded --border-label=" ESC to cancel " ' // &
+                                  '--prompt="Commit to revert: " ' // &
+                                  '--preview="git show --color=always {1}" ' // &
+                                  '--preview-window=right:60% > /tmp/fuss_revert_select.txt', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            call execute_command_line('rm -f /tmp/fuss_revert_select.txt', exitstat=status)
+            print '(A)', ''
+            print '(A)', 'Operation cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Read selected commit hash
+        open(unit=99, file='/tmp/fuss_revert_select.txt', status='old', action='read')
+        read(99, '(A)', iostat=status) selected_commit
+        close(99, status='delete')
+
+        if (status /= 0 .or. len_trim(selected_commit) == 0) then
+            print '(A)', ''
+            print '(A)', 'No commit selected.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Extract commit hash (first word)
+        selected_commit = selected_commit(1:7)
+
+        ! Perform revert
+        print '(A)', ''
+        write(command, '(A,A,A)') 'git revert --no-edit ', trim(selected_commit), ' 2>&1'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        print '(A)', ''
+        if (status_code == 0) then
+            print '(A)', achar(27) // '[32m✓ Reverted ' // trim(selected_commit) // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Revert failed or has conflicts' // achar(27) // '[0m'
+            print '(A)', 'Resolve conflicts, then run: git revert --continue'
+            print '(A)', 'Or abort with: git revert --abort'
+        end if
+
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
+        call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_revert_commit
+
+    subroutine git_show_history()
+        integer :: status_code, status
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        print '(A)', achar(27) // '[1mCommit History' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Browse commit history (read-only):'
+        print '(A)', ''
+
+        ! Browse commits with fzf (no action, just viewing)
+        call execute_command_line('git log --oneline --graph --color=always --all | ' // &
+                                  'fzf --ansi --height=100% --border=rounded --border-label=" ESC to close " ' // &
+                                  '--prompt="Browse commits: " ' // &
+                                  '--preview="echo {} | grep -o ''^[*|\\ /]*[0-9a-f]\+'' | head -1 | ' // &
+                                  'xargs -I % git show --color=always %" ' // &
+                                  '--preview-window=right:60% --no-select > /dev/null', &
+                                  exitstat=status_code)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_show_history
+
+    subroutine git_merge_branch(success)
+        logical, intent(out) :: success
+        integer :: status_code, status
+        character(len=512) :: selected_branch
+        character(len=2048) :: command
+
+        success = .false.
+
+        ! Restore terminal for fzf
+        call execute_command_line('stty sane < /dev/tty', exitstat=status)
+
+        print '(A)', achar(27) // '[1mMerge Branch' // achar(27) // '[0m'
+        print '(A)', ''
+        print '(A)', 'Select branch to merge into current branch:'
+        print '(A)', ''
+
+        ! Select branch (exclude current branch)
+        call execute_command_line('(git branch --all | grep -v HEAD | grep -v "^\*" | sed "s/^[* ] //" | ' // &
+                                  'sed "s/remotes\\/origin\\///" | sort -u) | ' // &
+                                  'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
+                                  '--prompt="Branch to merge: " ' // &
+                                  '--preview="echo Commits to merge:; git log --oneline --color=always HEAD..{} | head -20" ' // &
+                                  '--preview-window=right:50% > /tmp/fuss_merge_select.txt', &
+                                  exitstat=status_code)
+
+        if (status_code /= 0) then
+            call execute_command_line('rm -f /tmp/fuss_merge_select.txt', exitstat=status)
+            print '(A)', ''
+            print '(A)', 'Operation cancelled.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Read selected branch
+        open(unit=99, file='/tmp/fuss_merge_select.txt', status='old', action='read')
+        read(99, '(A)', iostat=status) selected_branch
+        close(99, status='delete')
+
+        if (status /= 0 .or. len_trim(selected_branch) == 0) then
+            print '(A)', ''
+            print '(A)', 'No branch selected.'
+            print '(A)', ''
+            print '(A)', 'Press any key to continue...'
+            call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+            call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+            return
+        end if
+
+        ! Perform merge
+        print '(A)', ''
+        print '(A)', 'Merging ' // trim(selected_branch) // ' into current branch...'
+        print '(A)', ''
+        write(command, '(A,A,A)') 'git merge ', trim(selected_branch), ' 2>&1'
+        call execute_command_line(trim(command), exitstat=status_code)
+
+        print '(A)', ''
+        if (status_code == 0) then
+            print '(A)', achar(27) // '[32m✓ Merged ' // trim(selected_branch) // achar(27) // '[0m'
+            success = .true.
+        else
+            print '(A)', achar(27) // '[31m✗ Merge failed or has conflicts' // achar(27) // '[0m'
+            print '(A)', 'Resolve conflicts, then run: git merge --continue'
+            print '(A)', 'Or abort with: git merge --abort'
+        end if
+
+        print '(A)', ''
+        print '(A)', 'Press any key to continue...'
+        call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
+
+        ! Re-enable cbreak mode
+        call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
+    end subroutine git_merge_branch
+
     subroutine git_tag(tag_name, tag_message, success)
         character(len=*), intent(in) :: tag_name
         character(len=*), intent(in) :: tag_message
