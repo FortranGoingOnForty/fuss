@@ -465,23 +465,24 @@ contains
                         needs_full_redraw = .true.
                     end if
                     cycle
+                ! NOTE: Arrow keys (after escape processing) are indistinguishable from uppercase A/B/C/D
+                ! Trade-off: Prioritize arrow functionality over uppercase C/D letters
+                ! Uppercase A/B work fine, C/D reserved for arrows
                 else if (key == 'C') then
-                    ! Right arrow - move cursor right
+                    ! Right arrow - move cursor right (also blocks uppercase C)
                     if (rename_cursor_pos < len_trim(rename_buffer)) then
                         rename_cursor_pos = rename_cursor_pos + 1
                         needs_full_redraw = .true.
                     end if
                     cycle
                 else if (key == 'D') then
-                    ! Left arrow - move cursor left
+                    ! Left arrow - move cursor left (also blocks uppercase D)
                     if (rename_cursor_pos > 0) then
                         rename_cursor_pos = rename_cursor_pos - 1
                         needs_full_redraw = .true.
                     end if
                     cycle
-                else if (key == 'A' .or. key == 'B') then
-                    ! Up/Down arrows - ignore in rename mode
-                    cycle
+                ! A and B (up/down arrows) are allowed as uppercase letters - arrows ignored
                 else if ((key >= 'a' .and. key <= 'z') .or. &
                          (key >= 'A' .and. key <= 'Z') .or. &
                          (key >= '0' .and. key <= '9') .or. &
