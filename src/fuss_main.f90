@@ -178,6 +178,11 @@ contains
         integer :: term_height, viewport_offset, visible_items, top_padding
         integer :: prev_selected, prev_viewport
         logical :: needs_full_redraw
+        character(len=10) :: mode  ! "normal" or "git" mode
+        ! Search state for fuzzy jump
+        character(len=32) :: search_buffer
+        integer :: search_length
+        integer(8) :: last_search_tick, current_tick, clock_rate
         type(tree_node), pointer :: tree_root
 
         ! Initialize tree pointer
@@ -243,6 +248,13 @@ contains
         selected = 1
         viewport_offset = 1
         running = .true.
+        mode = 'normal'  ! Start in normal mode
+
+        ! Initialize search state
+        search_buffer = ''
+        search_length = 0
+        last_search_tick = 0
+        call system_clock(count_rate=clock_rate)
 
         ! Partial redraw optimization: initialize tracking state
         prev_selected = 0  ! Force initial draw
@@ -271,34 +283,183 @@ contains
                 ! Full redraw needed: viewport scrolled or forced refresh
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                           search_buffer, search_length)
                 needs_full_redraw = .false.
             else if (selected /= prev_selected) then
                 ! Only selection changed within same viewport - still need full redraw for now
                 ! TODO: Could optimize this with partial line updates in the future
                 call clear_screen()
                 call draw_interactive_tree(tree_root, items, n_items, selected, &
-                                           repo_name, branch_name, viewport_offset, visible_items, top_padding)
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                           search_buffer, search_length)
             end if
 
             ! Update tracking state
             prev_selected = selected
             prev_viewport = viewport_offset
 
-            ! Read key
+            ! Check search timeout (0.5 seconds)
+            if (search_length > 0) then
+                call system_clock(current_tick)
+                ! Check if 0.5 seconds has elapsed (clock_rate/2 ticks)
+                if (current_tick - last_search_tick > clock_rate / 2) then
+                    search_length = 0
+                    search_buffer = ''
+                    needs_full_redraw = .true.
+                end if
+            end if
+
+            ! Always use fast blocking read - timeouts are too slow
             call read_key(key)
+
+            ! DEBUG: Log all control characters to see what we're getting
+            if (ichar(key) < 32) then
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A,I0)') 'Control char received: ', ichar(key)
+                close(99)
+            end if
+
+            ! Check for ctrl-c to quit (priority over everything)
+            if (key == achar(3)) then
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A)') 'CTRL-C detected - quitting!'
+                close(99)
+                running = .false.
+                cycle
+            end if
+
+            ! Check for alt-g to toggle git mode
+            ! alt-g is encoded as achar(1 + ichar('g') - ichar('a')) = achar(7)
+            if (key == achar(7)) then
+                ! Toggle between normal and git mode
+                if (mode == 'normal') then
+                    mode = 'git'
+                else
+                    mode = 'normal'
+                end if
+                ! Temporarily restore terminal to flush output properly
+                call execute_command_line('stty sane < /dev/tty')
+                call clear_screen()
+                call draw_interactive_tree(tree_root, items, n_items, selected, &
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                           search_buffer, search_length)
+                ! Restore cbreak mode
+                call enable_raw_mode()
+                cycle  ! Skip rest of key handling
+            end if
+
+            ! Handle ESC key - exit git mode or clear search
+            if (key == achar(27)) then
+                if (mode == 'git') then
+                    mode = 'normal'
+                    ! Temporarily restore terminal to flush output properly
+                    call execute_command_line('stty sane < /dev/tty')
+                    call clear_screen()
+                    call draw_interactive_tree(tree_root, items, n_items, selected, &
+                                               repo_name, branch_name, viewport_offset, visible_items, top_padding, mode, &
+                                               search_buffer, search_length)
+                    ! Restore cbreak mode
+                    call enable_raw_mode()
+                    cycle
+                else if (search_length > 0) then
+                    ! Clear search in normal mode
+                    search_length = 0
+                    search_buffer = ''
+                    needs_full_redraw = .true.
+                    cycle
+                end if
+                ! In normal mode, ESC does nothing for now
+                cycle
+            end if
+
+            ! Fuzzy search in normal mode - handle any printable character
+            ! Exclude A, B, C, D since those are arrow key codes after escape sequence processing
+            if (mode == 'normal') then
+                if ((key >= 'a' .and. key <= 'z') .or. &
+                    ((key >= 'E' .and. key <= 'Z') .or. (key >= '0' .and. key <= '9')) .or. &
+                    key == '_' .or. key == '-' .or. key == '.') then
+
+                    ! Check if timeout elapsed since last keypress - if so, start fresh search
+                    if (search_length > 0) then
+                        call system_clock(current_tick)
+                        if (current_tick - last_search_tick > clock_rate / 2) then
+                            ! Timeout elapsed (0.5 seconds) - clear buffer and start new search
+                            search_length = 0
+                            search_buffer = ''
+                            ! DEBUG
+                            open(99, file='/tmp/fuss_debug.log', position='append')
+                            write(99, '(A)') 'TIMEOUT: Starting fresh search (0.5s elapsed)'
+                            close(99)
+                        end if
+                    end if
+
+                    ! Add to search buffer
+                    if (search_length < 32) then
+                        search_length = search_length + 1
+                        search_buffer(search_length:search_length) = key
+                        call system_clock(last_search_tick)
+
+                        ! DEBUG
+                        open(99, file='/tmp/fuss_debug.log', position='append')
+                        write(99, '(A,A,A,I0)') 'Buffer: "', search_buffer(1:search_length), '" -> jumping to match'
+                        close(99)
+
+                        call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
+
+                        needs_full_redraw = .true.
+                    end if
+                    cycle  ! Skip case statement
+                else if (key == achar(127) .or. key == achar(8)) then
+                    ! Backspace - remove last character
+                    if (search_length > 0) then
+                        search_length = search_length - 1
+                        call system_clock(last_search_tick)
+                        if (search_length > 0) then
+                            call fuzzy_jump_to_match(items, n_items, search_buffer(1:search_length), selected)
+                        end if
+                        needs_full_redraw = .true.
+                    end if
+                    cycle  ! Skip case statement
+                end if
+            end if
 
             ! Handle input
             select case (key)
             case ('j', 'B')  ! j or down arrow - navigate to next sibling (skip nested items)
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_down(items, n_items, selected)
             case ('k', 'A')  ! k or up arrow - navigate to previous sibling (skip nested items)
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_up(items, n_items, selected)
             case ('D')  ! Left arrow - navigate to parent directory
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_left(items, n_items, selected)
             case ('C')  ! Right arrow - enter directory
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 call navigate_right(items, n_items, selected, tree_root, hide_dotfiles)
             case (' ')  ! Space bar - toggle expand/collapse
+                ! Clear search buffer on navigation
+                if (search_length > 0) then
+                    search_length = 0
+                    search_buffer = ''
+                end if
                 if (.not. items(selected)%is_file .and. associated(items(selected)%node)) then
                     ! Toggle the expanded state
                     items(selected)%node%is_expanded = .not. items(selected)%node%is_expanded
@@ -309,24 +470,27 @@ contains
                     ! Force full redraw after tree structure change
                     needs_full_redraw = .true.
                 end if
+            ! Git operations - only available in git mode
             case ('a')  ! Stage file or directory (lowercase to avoid conflict with arrow A)
-                ! Check if it's a directory - stage all files in it
-                if (.not. items(selected)%is_file) then
-                    call git_stage_directory(items(selected)%path)
-                    ! Refresh files after staging directory
-                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Otherwise it's a file - stage individual file
-                else if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
-                    call git_add_file(items(selected)%path)
-                    ! Refresh files after git add
-                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    ! Check if it's a directory - stage all files in it
+                    if (.not. items(selected)%is_file) then
+                        call git_stage_directory(items(selected)%path)
+                        ! Refresh files after staging directory
+                        call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                                hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Otherwise it's a file - stage individual file
+                    else if (items(selected)%is_file .and. (items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
+                        call git_add_file(items(selected)%path)
+                        ! Refresh files after git add
+                        call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                                hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    end if
                 end if
             case ('u')  ! Unstage file (lowercase)
-                if (items(selected)%is_file .and. items(selected)%is_staged) then
+                if (mode == 'git' .and. items(selected)%is_file .and. items(selected)%is_staged) then
                     call git_unstage_file(items(selected)%path)
                     ! Refresh files after git unstage
                     call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
@@ -334,84 +498,106 @@ contains
                     needs_full_redraw = .true.
                 end if
             case ('S')  ! Stage all (Shift+S to avoid conflict with up arrow 'A')
-                call git_stage_all()
-                ! Refresh files after staging all
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call git_stage_all()
+                    ! Refresh files after staging all
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('U')  ! Unstage all (Shift+U)
-                call git_unstage_all()
-                ! Refresh files after unstaging all
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call git_unstage_all()
+                    ! Refresh files after unstaging all
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('m')  ! Commit (lowercase)
-                call commit_prompt()
-                ! Refresh files after commit
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call commit_prompt()
+                    ! Refresh files after commit
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('M')  ! Amend last commit (Shift+m)
-                call amend_commit_prompt()
-                ! Refresh files after amend commit
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call amend_commit_prompt()
+                    ! Refresh files after amend commit
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('s')  ! Show git status (lowercase)
-                call show_status_view()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call show_status_view()
+                    needs_full_redraw = .true.
+                end if
             case ('p')  ! Push (lowercase)
-                call push_prompt()
-                ! Refresh files after push
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call push_prompt()
+                    ! Refresh files after push
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('t')  ! Tag (lowercase)
-                call tag_prompt()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call tag_prompt()
+                    needs_full_redraw = .true.
+                end if
             case ('b')  ! Switch branch
-                call branch_switch_prompt()
-                ! Refresh files after branch switch
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Update branch name display
-                call get_repo_info(repo_name, branch_name)
+                if (mode == 'git') then
+                    call branch_switch_prompt()
+                    ! Refresh files after branch switch
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Update branch name display
+                    call get_repo_info(repo_name, branch_name)
+                end if
             case ('n')  ! Create new branch
-                call branch_create_prompt()
-                ! Refresh files after branch creation
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Update branch name display
-                call get_repo_info(repo_name, branch_name)
+                if (mode == 'git') then
+                    call branch_create_prompt()
+                    ! Refresh files after branch creation
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Update branch name display
+                    call get_repo_info(repo_name, branch_name)
+                end if
             case ('R')  ! Delete branch (Shift+r, since 'r' is used for delete file)
-                call branch_delete_prompt()
-                needs_full_redraw = .true.
-                ! No need to refresh files or update branch name (stays on current branch)
-            case ('f')  ! Git fetch
-                call git_fetch()
-                ! Refresh files after fetch and include files with incoming changes
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
+                if (mode == 'git') then
+                    call branch_delete_prompt()
                     needs_full_redraw = .true.
+                    ! No need to refresh files or update branch name (stays on current branch)
+                end if
+            case ('f')  ! Git fetch
+                if (mode == 'git') then
+                    call git_fetch()
+                    ! Refresh files after fetch and include files with incoming changes
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('d')  ! Git diff with less
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
                     needs_full_redraw = .true.
                 end if
             case ('c')  ! View file contents (cat/bat/less)
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call view_file(items(selected)%path)
                     needs_full_redraw = .true.
                 end if
             case ('w')  ! Git blame (who changed this line)
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call blame_prompt(items(selected)%path)
                     needs_full_redraw = .true.
                 end if
             case ('r')  ! Remove/delete file
-                if (items(selected)%is_file) then
+                if (mode == 'git' .and. items(selected)%is_file) then
                     call delete_prompt(items(selected)%path, items(selected)%is_untracked)
                     ! Refresh files after delete
                     call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
@@ -419,7 +605,7 @@ contains
                     needs_full_redraw = .true.
                 end if
             case ('x', 'X')  ! Discard changes
-                if (items(selected)%is_file .and. (items(selected)%is_staged .or. items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
+                if (mode == 'git' .and. items(selected)%is_file .and. (items(selected)%is_staged .or. items(selected)%is_unstaged .or. items(selected)%is_untracked)) then
                     call discard_prompt(items(selected)%path, items(selected)%is_staged, items(selected)%is_untracked)
                     ! Refresh files after discard
                     call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
@@ -427,63 +613,83 @@ contains
                     needs_full_redraw = .true.
                 end if
             case ('l')  ! Git pull
-                call git_pull()
-                ! Refresh files after pull (incoming indicators will automatically clear)
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Note: After successful pull, git diff will show no upstream differences
-                ! so has_incoming will be .false. for all files automatically
+                if (mode == 'git') then
+                    call git_pull()
+                    ! Refresh files after pull (incoming indicators will automatically clear)
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, include_incoming=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Note: After successful pull, git diff will show no upstream differences
+                    ! so has_incoming will be .false. for all files automatically
+                end if
             case ('z')  ! Stash push (save changes)
-                call stash_push_prompt()
-                ! Refresh files after stash
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call stash_push_prompt()
+                    ! Refresh files after stash
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, exit_if_empty=.true., force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('Z')  ! Stash pop/apply (restore changes)
-                call stash_pop_apply_prompt()
-                ! Refresh files after stash pop/apply
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call stash_pop_apply_prompt()
+                    ! Refresh files after stash pop/apply
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('y')  ! Cherry-pick (yank commit)
-                call cherry_pick_prompt()
-                ! Refresh files after cherry-pick
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call cherry_pick_prompt()
+                    ! Refresh files after cherry-pick
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('v')  ! Revert commit
-                call revert_commit_prompt()
-                ! Refresh files after revert
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call revert_commit_prompt()
+                    ! Refresh files after revert
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('h')  ! Show commit history
-                call history_browser_prompt()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call history_browser_prompt()
+                    needs_full_redraw = .true.
+                end if
             case ('L')  ! Show reflog (Shift+l)
-                call reflog_browser_prompt()
-                needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call reflog_browser_prompt()
+                    needs_full_redraw = .true.
+                end if
             case ('G')  ! Merge branch (Shift+g)
-                call merge_branch_prompt()
-                ! Refresh files after merge
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
-                ! Update branch name display in case we merged
-                call get_repo_info(repo_name, branch_name)
+                if (mode == 'git') then
+                    call merge_branch_prompt()
+                    ! Refresh files after merge
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                    ! Update branch name display in case we merged
+                    call get_repo_info(repo_name, branch_name)
+                end if
             case ('O')  ! Reset (Shift+o - "Oh no, undo!")
-                call reset_prompt()
-                ! Refresh files after reset
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call reset_prompt()
+                    ! Refresh files after reset
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('I')  ! Interactive rebase (Shift+i)
-                call rebase_prompt()
-                ! Refresh files after rebase
-                call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
-                                        hide_dotfiles, selected, running, force_refresh=.true.)
-                    needs_full_redraw = .true.
+                if (mode == 'git') then
+                    call rebase_prompt()
+                    ! Refresh files after rebase
+                    call refresh_and_rebuild(show_all, files, n_files, items, n_items, tree_root, &
+                                            hide_dotfiles, selected, running, force_refresh=.true.)
+                        needs_full_redraw = .true.
+                end if
             case ('.')  ! Toggle hiding dotfiles and gitignored files
                 hide_dotfiles = .not. hide_dotfiles
                 ! Rebuild item list with new filter
@@ -497,8 +703,17 @@ contains
                 visible_items = term_height - top_padding - 6
                 if (visible_items < 3) visible_items = 3
                 if (visible_items > n_items) visible_items = n_items
-            case ('q', 'Q')  ! Quit
-                running = .false.
+            case ('q', 'Q')  ! Exit git mode
+                if (mode == 'git') then
+                    ! In git mode: q exits to normal mode
+                    mode = 'normal'
+                    needs_full_redraw = .true.
+                end if
+                ! Note: In normal mode, 'q' is used for fuzzy search
+                ! Use ctrl-c to quit from normal mode
+            case default
+                ! Unhandled keys - do nothing
+                continue
             end select
         end do
 
@@ -1319,5 +1534,192 @@ contains
             if (present(running)) running = .false.
         end if
     end subroutine refresh_and_rebuild
+
+    subroutine fuzzy_jump_to_match(items, n_items, pattern, selected)
+        ! Jump to BEST matching item using fzf-style scoring
+        ! Two-pass approach: basename matches first, then path matches
+        ! This ensures "src" matches "src/" directory before "src/file.f90"
+        type(selectable_item), intent(in) :: items(:)
+        integer, intent(in) :: n_items
+        character(len=*), intent(in) :: pattern
+        integer, intent(inout) :: selected
+        integer :: i, best_idx, best_score, score, current_score
+
+        best_idx = selected  ! Stay at current if no matches
+        best_score = 0
+
+        ! Check current item's basename first - if it's a perfect match, stay on it!
+        if (associated(items(selected)%node)) then
+            current_score = fuzzy_match_score(pattern, items(selected)%node%name)
+            if (current_score >= 10000) then  ! Exact match - stay here!
+                ! DEBUG
+                open(99, file='/tmp/fuss_debug.log', position='append')
+                write(99, '(A,I0,A,A,A,I0,A)') '  EXACT MATCH (current): item=', selected, ' path=', &
+                                              trim(items(selected)%path), ' score=', current_score, ' (basename)'
+                close(99)
+                return
+            end if
+            best_score = current_score
+            best_idx = selected
+        end if
+
+        ! PASS 1: Search for basename matches (directories, file names)
+        do i = 1, n_items
+            if (i == selected) cycle  ! Already checked current above
+
+            if (associated(items(i)%node)) then
+                score = fuzzy_match_score(pattern, items(i)%node%name)
+                if (score > best_score) then
+                    best_score = score
+                    best_idx = i
+                end if
+            end if
+        end do
+
+        ! If we found a good basename match, use it
+        if (best_score >= 5000) then  ! Prefix or exact match
+            selected = best_idx
+            ! DEBUG
+            open(99, file='/tmp/fuss_debug.log', position='append')
+            write(99, '(A,I0,A,A,A,I0,A)') '  BASENAME MATCH: item=', best_idx, ' path=', &
+                                          trim(items(best_idx)%path), ' score=', best_score, ' (basename)'
+            close(99)
+            return
+        end if
+
+        ! PASS 2: Search full paths if no good basename match
+        do i = 1, n_items
+            if (i == selected) cycle
+
+            score = fuzzy_match_score(pattern, items(i)%path)
+            if (score > best_score) then
+                best_score = score
+                best_idx = i
+            end if
+        end do
+
+        ! Jump to best match if any was found
+        if (best_score > 0) then
+            selected = best_idx
+            ! DEBUG
+            open(99, file='/tmp/fuss_debug.log', position='append')
+            write(99, '(A,I0,A,A,A,I0,A)') '  PATH MATCH: item=', best_idx, ' path=', &
+                                          trim(items(best_idx)%path), ' score=', best_score, ' (fullpath)'
+            close(99)
+        end if
+    end subroutine fuzzy_jump_to_match
+
+    function fuzzy_match_score(pattern, text) result(score)
+        ! Fuzzy matching with fzf-style scoring
+        ! Returns a score (higher is better), 0 means no match
+        character(len=*), intent(in) :: pattern, text
+        integer :: score
+        integer :: pattern_idx, text_idx, match_start, consecutive_bonus
+        character(len=256) :: pattern_lower, text_lower
+        logical :: is_consecutive
+
+        score = 0
+
+        ! Empty pattern matches everything with score 1
+        if (len_trim(pattern) == 0) then
+            score = 1
+            return
+        end if
+
+        ! Convert to lowercase once
+        pattern_lower = pattern
+        text_lower = text
+        call to_lowercase(pattern_lower)
+        call to_lowercase(text_lower)
+
+        ! Check for exact match first (highest score)
+        if (trim(pattern_lower) == trim(text_lower)) then
+            score = 10000
+            return
+        end if
+
+        ! Check for prefix match (very high score)
+        if (len_trim(pattern_lower) <= len_trim(text_lower)) then
+            if (text_lower(1:len_trim(pattern_lower)) == trim(pattern_lower)) then
+                score = 5000
+                return
+            end if
+        end if
+
+        ! Fuzzy match with scoring
+        pattern_idx = 1
+        consecutive_bonus = 0
+        is_consecutive = .false.
+        match_start = -1
+
+        do text_idx = 1, len_trim(text_lower)
+            if (pattern_idx > len_trim(pattern_lower)) exit
+
+            if (pattern_lower(pattern_idx:pattern_idx) == text_lower(text_idx:text_idx)) then
+                if (match_start == -1) match_start = text_idx
+
+                ! Base score for each matched character
+                score = score + 100
+
+                ! Bonus for consecutive characters
+                if (is_consecutive) then
+                    consecutive_bonus = consecutive_bonus + 1
+                    score = score + consecutive_bonus * 50
+                else
+                    consecutive_bonus = 1
+                    is_consecutive = .true.
+                end if
+
+                ! Bonus for matching at start of text
+                if (text_idx == 1) then
+                    score = score + 200
+                end if
+
+                ! Bonus for matching after separator (word boundary)
+                if (text_idx > 1) then
+                    if (text_lower(text_idx-1:text_idx-1) == '/' .or. &
+                        text_lower(text_idx-1:text_idx-1) == '_' .or. &
+                        text_lower(text_idx-1:text_idx-1) == '-' .or. &
+                        text_lower(text_idx-1:text_idx-1) == '.') then
+                        score = score + 150
+                    end if
+                end if
+
+                pattern_idx = pattern_idx + 1
+            else
+                ! Reset consecutive bonus when characters don't match
+                is_consecutive = .false.
+                consecutive_bonus = 0
+                ! Small penalty for gaps
+                if (match_start > 0) then
+                    score = score - 1
+                end if
+            end if
+        end do
+
+        ! No match if we didn't find all pattern characters
+        if (pattern_idx <= len_trim(pattern_lower)) then
+            score = 0
+            return
+        end if
+
+        ! Bonus for shorter strings (prefer concise matches)
+        score = score - len_trim(text_lower)
+
+    end function fuzzy_match_score
+
+    subroutine to_lowercase(str)
+        ! Convert string to lowercase in-place
+        character(len=*), intent(inout) :: str
+        integer :: i
+        character(len=1) :: c
+
+        do i = 1, len_trim(str)
+            c = str(i:i)
+            if (c >= 'A' .and. c <= 'Z') then
+                str(i:i) = achar(ichar(c) + 32)
+            end if
+        end do
+    end subroutine to_lowercase
 
 end program fuss
