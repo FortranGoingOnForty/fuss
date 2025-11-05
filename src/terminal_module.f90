@@ -1,6 +1,9 @@
 module terminal_module
     implicit none
 
+    ! Shared temp file for reducing disk I/O
+    character(len=*), parameter :: FUSS_TEMP = '/tmp/fuss_tmp.txt'
+
 contains
 
     subroutine enter_alternate_screen()
@@ -85,11 +88,11 @@ contains
         height = 24  ! Default fallback
 
         ! Try method 1: Use stty size to get terminal dimensions
-        call execute_command_line('stty size < /dev/tty 2>/dev/null | cut -d" " -f1 > /tmp/fuss_term_height.txt', &
+        call execute_command_line('stty size < /dev/tty 2>/dev/null | cut -d" " -f1 > ' // FUSS_TEMP // '', &
                                   exitstat=status)
 
         if (status == 0) then
-            open(newunit=unit_num, file='/tmp/fuss_term_height.txt', status='old', action='read', iostat=iostat)
+            open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
             if (iostat == 0) then
                 read(unit_num, *, iostat=iostat) height
                 close(unit_num, status='delete')
@@ -99,10 +102,10 @@ contains
         end if
 
         ! Try method 2: tput lines
-        call execute_command_line('tput lines < /dev/tty > /tmp/fuss_term_height.txt 2>/dev/null', exitstat=status)
+        call execute_command_line('tput lines < /dev/tty > ' // FUSS_TEMP // ' 2>/dev/null', exitstat=status)
 
         if (status == 0) then
-            open(newunit=unit_num, file='/tmp/fuss_term_height.txt', status='old', action='read', iostat=iostat)
+            open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
             if (iostat == 0) then
                 read(unit_num, *, iostat=iostat) height
                 close(unit_num, status='delete')

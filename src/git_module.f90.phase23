@@ -721,12 +721,12 @@ contains
         message = ''
 
         ! Get the last commit message using git log
-        call execute_command_line('git log -1 --pretty=%B > ' // FUSS_TEMP // ' 2>/dev/null', exitstat=status)
+        call execute_command_line('git log -1 --pretty=%B > /tmp/fuss_last_commit.txt 2>/dev/null', exitstat=status)
 
         if (status /= 0) return
 
         ! Read the commit message
-        open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+        open(newunit=unit_num, file='/tmp/fuss_last_commit.txt', status='old', action='read', iostat=iostat)
         if (iostat /= 0) return
 
         ! Read first line (single-line commit message)
@@ -832,7 +832,7 @@ contains
             end if
 
             ! Origin exists - get current branch name and push to origin
-            call execute_command_line('git rev-parse --abbrev-ref HEAD > ' // FUSS_TEMP // ' 2>&1', &
+            call execute_command_line('git rev-parse --abbrev-ref HEAD > /tmp/fuss_current_branch.txt 2>&1', &
                                       exitstat=status)
 
             if (status /= 0) then
@@ -842,7 +842,7 @@ contains
             end if
 
             ! Read current branch name
-            open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+            open(newunit=unit_num, file='/tmp/fuss_current_branch.txt', status='old', action='read', iostat=iostat)
             if (iostat /= 0) then
                 print '(A)', achar(27) // '[31m✗ Could not read branch name' // achar(27) // '[0m'
                 print '(A)', 'Press any key to continue...'
@@ -909,11 +909,11 @@ contains
         branch_name = ''
 
         ! Get repo name (basename of repo root)
-        call execute_command_line('git rev-parse --show-toplevel 2>/dev/null | xargs basename > ' // FUSS_TEMP // '', &
+        call execute_command_line('git rev-parse --show-toplevel 2>/dev/null | xargs basename > /tmp/fuss_repo.txt', &
                                   exitstat=status_code)
 
         if (status_code == 0) then
-            open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+            open(newunit=unit_num, file='/tmp/fuss_repo.txt', status='old', action='read', iostat=iostat)
             if (iostat == 0) then
                 read(unit_num, '(A)', iostat=iostat) repo_name
                 close(unit_num, status='delete')
@@ -921,11 +921,11 @@ contains
         end if
 
         ! Get current branch name
-        call execute_command_line('git rev-parse --abbrev-ref HEAD 2>/dev/null > ' // FUSS_TEMP // '', &
+        call execute_command_line('git rev-parse --abbrev-ref HEAD 2>/dev/null > /tmp/fuss_branch.txt', &
                                   exitstat=status_code)
 
         if (status_code == 0) then
-            open(newunit=unit_num, file=FUSS_TEMP, status='old', action='read', iostat=iostat)
+            open(newunit=unit_num, file='/tmp/fuss_branch.txt', status='old', action='read', iostat=iostat)
             if (iostat == 0) then
                 read(unit_num, '(A)', iostat=iostat) branch_name
                 close(unit_num, status='delete')
@@ -951,7 +951,7 @@ contains
         ! Use fzf to select remote branch
         call execute_command_line('git branch -r | grep -v HEAD | sed "s/^  //" | ' // &
                                   'fzf --height=10 --border=rounded --border-label=" ESC to cancel " ' // &
-                                  '--prompt="Select upstream: " > ' // FUSS_TEMP // '', &
+                                  '--prompt="Select upstream: " > /tmp/fuss_upstream.txt', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
@@ -964,7 +964,7 @@ contains
         end if
 
         ! Read selected branch
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status_code)
+        open(unit=99, file='/tmp/fuss_upstream.txt', status='old', action='read', iostat=status_code)
         if (status_code == 0) then
             read(99, '(A)', iostat=status_code) selected_branch
             close(99, status='delete')
@@ -1399,11 +1399,11 @@ contains
                                   'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
                                   '--prompt="Source branch: " ' // &
                                   '--preview="git log --oneline --graph --color=always {} | head -20" ' // &
-                                  '--preview-window=right:50% > ' // FUSS_TEMP // '', &
+                                  '--preview-window=right:50% > /tmp/fuss_branch_select.txt', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
-            call execute_command_line('rm -f ' // FUSS_TEMP // '', exitstat=status)
+            call execute_command_line('rm -f /tmp/fuss_branch_select.txt', exitstat=status)
             print '(A)', ''
             print '(A)', 'Operation cancelled.'
             print '(A)', ''
@@ -1414,7 +1414,7 @@ contains
         end if
 
         ! Read selected branch
-        open(unit=99, file=FUSS_TEMP, status='old', action='read')
+        open(unit=99, file='/tmp/fuss_branch_select.txt', status='old', action='read')
         read(99, '(A)', iostat=status) selected_branch
         close(99, status='delete')
 
@@ -1437,11 +1437,11 @@ contains
                                   'fzf --height=20 --border=rounded --border-label=" ESC to cancel " ' // &
                                   '--prompt="Commit: " ' // &
                                   '--preview="git show --color=always {1}" ' // &
-                                  '--preview-window=right:60% > ' // FUSS_TEMP // ''
+                                  '--preview-window=right:60% > /tmp/fuss_commit_select.txt'
         call execute_command_line(trim(command), exitstat=status_code)
 
         if (status_code /= 0) then
-            call execute_command_line('rm -f ' // FUSS_TEMP // '', exitstat=status)
+            call execute_command_line('rm -f /tmp/fuss_commit_select.txt', exitstat=status)
             print '(A)', ''
             print '(A)', 'Operation cancelled.'
             print '(A)', ''
@@ -1452,7 +1452,7 @@ contains
         end if
 
         ! Read selected commit (first 7 chars is the hash)
-        open(unit=99, file=FUSS_TEMP, status='old', action='read')
+        open(unit=99, file='/tmp/fuss_commit_select.txt', status='old', action='read')
         read(99, '(A)', iostat=status) selected_commit
         close(99, status='delete')
 
@@ -1513,11 +1513,11 @@ contains
                                   'fzf --height=20 --border=rounded --border-label=" ESC to cancel " ' // &
                                   '--prompt="Commit to revert: " ' // &
                                   '--preview="git show --color=always {1}" ' // &
-                                  '--preview-window=right:60% > ' // FUSS_TEMP // '', &
+                                  '--preview-window=right:60% > /tmp/fuss_revert_select.txt', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
-            call execute_command_line('rm -f ' // FUSS_TEMP // '', exitstat=status)
+            call execute_command_line('rm -f /tmp/fuss_revert_select.txt', exitstat=status)
             print '(A)', ''
             print '(A)', 'Operation cancelled.'
             print '(A)', ''
@@ -1528,7 +1528,7 @@ contains
         end if
 
         ! Read selected commit hash
-        open(unit=99, file=FUSS_TEMP, status='old', action='read')
+        open(unit=99, file='/tmp/fuss_revert_select.txt', status='old', action='read')
         read(99, '(A)', iostat=status) selected_commit
         close(99, status='delete')
 
@@ -1623,11 +1623,11 @@ contains
                                   'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
                                   '--prompt="Branch to merge: " ' // &
                                   '--preview="echo Commits to merge:; git log --oneline --color=always HEAD..{} | head -20" ' // &
-                                  '--preview-window=right:50% > ' // FUSS_TEMP // '', &
+                                  '--preview-window=right:50% > /tmp/fuss_merge_select.txt', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
-            call execute_command_line('rm -f ' // FUSS_TEMP // '', exitstat=status)
+            call execute_command_line('rm -f /tmp/fuss_merge_select.txt', exitstat=status)
             print '(A)', ''
             print '(A)', 'Operation cancelled.'
             print '(A)', ''
@@ -1638,7 +1638,7 @@ contains
         end if
 
         ! Read selected branch
-        open(unit=99, file=FUSS_TEMP, status='old', action='read')
+        open(unit=99, file='/tmp/fuss_merge_select.txt', status='old', action='read')
         read(99, '(A)', iostat=status) selected_branch
         close(99, status='delete')
 
@@ -1721,7 +1721,7 @@ contains
                                   'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
                                   '--prompt="Switch to branch: " ' // &
                                   '--preview="git log --oneline --graph --color=always {}" ' // &
-                                  '--preview-window=right:50% > ' // FUSS_TEMP // '', &
+                                  '--preview-window=right:50% > /tmp/fuss_branch_select.txt', &
                                   exitstat=status_code)
 
         ! Re-enable cbreak mode first
@@ -1736,7 +1736,7 @@ contains
         end if
 
         ! Read selected branch
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status_code)
+        open(unit=99, file='/tmp/fuss_branch_select.txt', status='old', action='read', iostat=status_code)
         if (status_code /= 0) then
             print '(A)', 'Branch switch cancelled.'
             print '(A)', ''
@@ -1808,7 +1808,7 @@ contains
         success = .false.
 
         ! Get current branch name to prevent deleting it
-        call execute_command_line('git rev-parse --abbrev-ref HEAD > ' // FUSS_TEMP // ' 2>&1', &
+        call execute_command_line('git rev-parse --abbrev-ref HEAD > /tmp/fuss_current_branch.txt 2>&1', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
@@ -1816,7 +1816,7 @@ contains
             return
         end if
 
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status_code)
+        open(unit=99, file='/tmp/fuss_current_branch.txt', status='old', action='read', iostat=status_code)
         if (status_code == 0) then
             read(99, '(A)', iostat=status_code) current_branch
             close(99, status='delete')
@@ -1829,7 +1829,7 @@ contains
 
         ! Use fzf to select branch to delete (exclude current branch)
         write(command, '(A,A,A)') 'git branch | grep -v "^* " | sed "s/^  //" | grep -v "^', trim(current_branch), &
-                                  '$" | fzf --height=15 --border=rounded --border-label=" ESC to cancel " --prompt="Delete branch: " > ' // FUSS_TEMP // ''
+                                  '$" | fzf --height=15 --border=rounded --border-label=" ESC to cancel " --prompt="Delete branch: " > /tmp/fuss_branch_delete.txt'
         call execute_command_line(trim(command), exitstat=status_code)
 
         ! Re-enable cbreak mode
@@ -1844,7 +1844,7 @@ contains
         end if
 
         ! Read selected branch
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status_code)
+        open(unit=99, file='/tmp/fuss_branch_delete.txt', status='old', action='read', iostat=status_code)
         if (status_code /= 0) then
             print '(A)', 'Branch deletion cancelled.'
             print '(A)', ''
@@ -1960,7 +1960,7 @@ contains
         success = .false.
 
         ! Check if there are any stashes
-        call execute_command_line('git stash list > ' // FUSS_TEMP // ' 2>&1', exitstat=status_code)
+        call execute_command_line('git stash list > /tmp/fuss_stash_check.txt 2>&1', exitstat=status_code)
         if (status_code /= 0) then
             print '(A)', achar(27) // '[33mNo stashes available' // achar(27) // '[0m'
             print '(A)', 'Press any key to continue...'
@@ -1968,15 +1968,15 @@ contains
         end if
 
         ! Check if stash list is empty
-        call execute_command_line('test -s ' // FUSS_TEMP // '', exitstat=status_code)
+        call execute_command_line('test -s /tmp/fuss_stash_check.txt', exitstat=status_code)
         if (status_code /= 0) then
             print '(A)', achar(27) // '[33mNo stashes available' // achar(27) // '[0m'
             print '(A)', 'Press any key to continue...'
-            call execute_command_line('rm -f ' // FUSS_TEMP // '', exitstat=status_code)
+            call execute_command_line('rm -f /tmp/fuss_stash_check.txt', exitstat=status_code)
             return
         end if
 
-        call execute_command_line('rm -f ' // FUSS_TEMP // '', exitstat=status_code)
+        call execute_command_line('rm -f /tmp/fuss_stash_check.txt', exitstat=status_code)
 
         ! Restore terminal for fzf
         call execute_command_line('stty sane < /dev/tty', exitstat=status_code)
@@ -1986,7 +1986,7 @@ contains
                                   'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
                                   '--prompt="Select stash: " ' // &
                                   '--preview="git stash show -p {1}" --preview-window=right:50% ' // &
-                                  '> ' // FUSS_TEMP // '', &
+                                  '> /tmp/fuss_stash_select.txt', &
                                   exitstat=status_code)
 
         ! Re-enable cbreak mode
@@ -2001,7 +2001,7 @@ contains
         end if
 
         ! Read selected stash
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status_code)
+        open(unit=99, file='/tmp/fuss_stash_select.txt', status='old', action='read', iostat=status_code)
         if (status_code /= 0) then
             print '(A)', 'Stash operation cancelled.'
             print '(A)', ''
@@ -2130,7 +2130,7 @@ contains
                                   'fzf --height=15 --border=rounded --border-label=" ESC to cancel " ' // &
                                   '--prompt="Reset to: " ' // &
                                   '--preview="git show --stat --color=always {1}" ' // &
-                                  '--preview-window=right:60% > ' // FUSS_TEMP // '', &
+                                  '--preview-window=right:60% > /tmp/fuss_reset_commit.txt', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
@@ -2143,7 +2143,7 @@ contains
         end if
 
         ! Read selected commit
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status)
+        open(unit=99, file='/tmp/fuss_reset_commit.txt', status='old', action='read', iostat=status)
         if (status /= 0) then
             print '(A)', achar(27) // '[31m✗ Failed to read selection' // achar(27) // '[0m'
             call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
@@ -2168,11 +2168,11 @@ contains
         print '(A)', 'Enter choice (1/2/3) or ESC to cancel: '
 
         ! Get mode choice
-        call execute_command_line('read -n 1 choice < /dev/tty; echo $choice > ' // FUSS_TEMP // '', &
+        call execute_command_line('read -n 1 choice < /dev/tty; echo $choice > /tmp/fuss_reset_mode.txt', &
                                   exitstat=status)
 
         ! Read mode choice
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status)
+        open(unit=99, file='/tmp/fuss_reset_mode.txt', status='old', action='read', iostat=status)
         if (status /= 0) then
             print '(A)', 'Reset cancelled.'
             call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
@@ -2195,11 +2195,11 @@ contains
                 print '(A)', achar(27) // '[1;31mThis operation CANNOT be undone!' // achar(27) // '[0m'
                 print '(A)', ''
                 print '(A)', 'Type "yes" to confirm hard reset: '
-                call execute_command_line('read conf < /dev/tty; echo $conf > ' // FUSS_TEMP // '', &
+                call execute_command_line('read conf < /dev/tty; echo $conf > /tmp/fuss_reset_confirm.txt', &
                                           exitstat=status)
 
                 ! Read confirmation
-                open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status)
+                open(unit=99, file='/tmp/fuss_reset_confirm.txt', status='old', action='read', iostat=status)
                 if (status == 0) then
                     read(99, '(A)', iostat=status) confirmation
                     close(99)
@@ -2313,7 +2313,7 @@ contains
                                   '--preview="git log --oneline --color=always {1}~1..HEAD | head -20" ' // &
                                   '--preview-window=right:60% ' // &
                                   '--preview-label=" Commits that will be rebased " ' // &
-                                  '> ' // FUSS_TEMP // '', &
+                                  '> /tmp/fuss_rebase_base.txt', &
                                   exitstat=status_code)
 
         if (status_code /= 0) then
@@ -2326,7 +2326,7 @@ contains
         end if
 
         ! Read selected commit
-        open(unit=99, file=FUSS_TEMP, status='old', action='read', iostat=status)
+        open(unit=99, file='/tmp/fuss_rebase_base.txt', status='old', action='read', iostat=status)
         if (status /= 0) then
             print '(A)', achar(27) // '[31m✗ Failed to read selection' // achar(27) // '[0m'
             call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
