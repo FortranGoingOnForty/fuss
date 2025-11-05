@@ -2,11 +2,8 @@ module git_module
     use iso_fortran_env, only: error_unit
     use types_module
     use cache_module
+    use terminal_module
     implicit none
-
-    ! Shared temp file for reducing disk I/O and clutter
-    ! Reused across operations, deleted after each read
-    character(len=*), parameter :: FUSS_TEMP = '/tmp/fuss_tmp.txt'
 
 contains
 
@@ -1288,7 +1285,8 @@ contains
         logical :: upstream_set
         logical :: has_local_changes
 
-        ! Restore terminal temporarily for less
+        ! Exit alternate screen and restore terminal for less
+        call exit_alternate_screen()
         call execute_command_line('stty sane < /dev/tty', exitstat=status)
 
         ! Check if file has local changes (unstaged or staged)
@@ -1319,6 +1317,7 @@ contains
                 ! No upstream configured - prompt user to select one
                 call prompt_upstream_selection(upstream_set)
                 if (.not. upstream_set) then
+                    call enter_alternate_screen()
                     call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
                     return
                 end if
@@ -1334,7 +1333,8 @@ contains
             call execute_command_line('sleep 1', exitstat=status)
         end if
 
-        ! Re-enable cbreak mode
+        ! Re-enter alternate screen and re-enable cbreak mode
+        call enter_alternate_screen()
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine git_diff_file
 
@@ -1344,7 +1344,8 @@ contains
         integer :: status
         logical :: bat_available, less_available
 
-        ! Restore terminal temporarily for pager
+        ! Exit alternate screen and restore terminal for pager
+        call exit_alternate_screen()
         call execute_command_line('stty sane < /dev/tty', exitstat=status)
 
         ! Check if bat is available
@@ -1355,9 +1356,9 @@ contains
         call execute_command_line('command -v less > /dev/null 2>&1', exitstat=status)
         less_available = (status == 0)
 
-        ! Use bat if available (with nice syntax highlighting)
+        ! Use bat with paging if available (with nice syntax highlighting)
         if (bat_available) then
-            write(command, '(A,A,A)') 'bat --style=numbers,changes --color=always "', trim(filepath), '"'
+            write(command, '(A,A,A)') 'bat --style=numbers,changes --paging=always "', trim(filepath), '"'
             call execute_command_line(trim(command), exitstat=status)
         else if (less_available) then
             ! Fallback to less
@@ -1373,7 +1374,8 @@ contains
             call execute_command_line('read -n 1 -s < /dev/tty', exitstat=status)
         end if
 
-        ! Re-enable cbreak mode
+        ! Re-enter alternate screen and re-enable cbreak mode
+        call enter_alternate_screen()
         call execute_command_line('stty cbreak -echo < /dev/tty', exitstat=status)
     end subroutine view_file
 
