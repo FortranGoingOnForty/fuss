@@ -184,14 +184,15 @@ contains
         ! Initialize tree pointer
         tree_root => null()
 
-        ! Detect terminal type for padding (fixes WezTerm/Ghostty top line cutoff)
+        ! Detect terminal type for padding (fixes WezTerm/Ghostty/iTerm top line cutoff)
+        ! Alternate screen buffer needs more padding to prevent top cutoff
         call get_environment_variable("TERM_PROGRAM", term_program)
         if (index(term_program, "WezTerm") > 0 .or. index(term_program, "ghostty") > 0) then
-            top_padding = 2  ! WezTerm/Ghostty need 2 lines of padding
+            top_padding = 3  ! WezTerm/Ghostty need 3 lines in alternate screen
         else if (index(term_program, "Apple_Terminal") > 0 .or. index(term_program, "iTerm") > 0) then
-            top_padding = 2  ! Terminal.app and iTerm2 also need 2 lines
+            top_padding = 3  ! Terminal.app and iTerm2 also need 3 lines
         else
-            top_padding = 1  ! Other terminals need 1 line
+            top_padding = 2  ! Other terminals need 2 lines
         end if
 
         ! Get repo and branch info
@@ -224,15 +225,16 @@ contains
 
         ! Calculate visible items accurately
         ! Fixed UI elements that take screen space:
-        !   Line 1: repo:branch (e.g., "fuss:trunk")
-        !   Line 2: blank line after repo
-        !   Line 3: "." root
-        !   Lines 4 to N-3: tree items (VIEWPORT)
-        !   Line N-2: blank line before help
-        !   Line N-1: help legend (↑=staged ✗=modified ✗=untracked)
-        !   Line N: help controls (j/k/↓/↑: navigate | ...)
-        ! Total fixed: 6 lines (2 + 1 + 3)
-        visible_items = term_height - 6
+        !   top_padding lines: blank padding for terminal compatibility (2-3 lines)
+        !   1 line: repo:branch (e.g., "fuss:trunk")
+        !   1 line: blank line after repo
+        !   1 line: "." root
+        !   Lines X to N-3: tree items (VIEWPORT)
+        !   1 line: blank line before help
+        !   1 line: help legend (↑=staged ✗=modified ✗=untracked)
+        !   1 line: help controls (j/k/↓/↑: navigate | ...)
+        ! Total fixed: top_padding + 6 lines
+        visible_items = term_height - top_padding - 6
         if (visible_items < 3) visible_items = 3  ! Absolute minimum
         if (visible_items > n_items) visible_items = n_items  ! Don't exceed total items
 
@@ -485,7 +487,7 @@ contains
                 ! Force full redraw after filter change
                 needs_full_redraw = .true.
                 ! Recalculate visible_items in case n_items changed
-                visible_items = term_height - 6
+                visible_items = term_height - top_padding - 6
                 if (visible_items < 3) visible_items = 3
                 if (visible_items > n_items) visible_items = n_items
             case ('q', 'Q')  ! Quit

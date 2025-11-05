@@ -6,7 +6,7 @@ BUILD_DIR = build
 BIN_DIR = .
 
 # Module files (order matters for dependencies)
-MODULES = types_module.f90 terminal_module.f90 git_module.f90 tree_module.f90 display_module.f90
+MODULES = types_module.f90 cache_module.f90 terminal_module.f90 git_module.f90 tree_module.f90 display_module.f90
 MODULE_OBJS = $(MODULES:%.f90=$(BUILD_DIR)/%.o)
 
 # Main program
@@ -30,10 +30,13 @@ $(BUILD_DIR):
 $(BUILD_DIR)/types_module.o: $(SRC_DIR)/types_module.f90 | $(BUILD_DIR)
 	$(FC) $(FFLAGS) -J$(BUILD_DIR) -c $< -o $@
 
+$(BUILD_DIR)/cache_module.o: $(SRC_DIR)/cache_module.f90 $(BUILD_DIR)/types_module.o | $(BUILD_DIR)
+	$(FC) $(FFLAGS) -J$(BUILD_DIR) -I$(BUILD_DIR) -c $< -o $@
+
 $(BUILD_DIR)/terminal_module.o: $(SRC_DIR)/terminal_module.f90 | $(BUILD_DIR)
 	$(FC) $(FFLAGS) -J$(BUILD_DIR) -c $< -o $@
 
-$(BUILD_DIR)/git_module.o: $(SRC_DIR)/git_module.f90 $(BUILD_DIR)/types_module.o | $(BUILD_DIR)
+$(BUILD_DIR)/git_module.o: $(SRC_DIR)/git_module.f90 $(BUILD_DIR)/types_module.o $(BUILD_DIR)/cache_module.o | $(BUILD_DIR)
 	$(FC) $(FFLAGS) -J$(BUILD_DIR) -I$(BUILD_DIR) -c $< -o $@
 
 $(BUILD_DIR)/tree_module.o: $(SRC_DIR)/tree_module.f90 $(BUILD_DIR)/types_module.o | $(BUILD_DIR)
