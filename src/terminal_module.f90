@@ -69,9 +69,12 @@ contains
 
         ! Check for escape sequence (arrow keys or alt-key combos)
         if (key == achar(27)) then
-            read(tty_unit, '(A2)', iostat=iostat, advance='no') escape_seq
+            ! Read just the first character after ESC
+            read(tty_unit, '(A1)', iostat=iostat, advance='no') escape_seq(1:1)
+
             if (escape_seq(1:1) == '[') then
-                ! Arrow key sequence: ESC[A/B/C/D
+                ! Arrow key sequence: ESC[A/B/C/D - need to read one more char
+                read(tty_unit, '(A1)', iostat=iostat, advance='no') escape_seq(2:2)
                 key = escape_seq(2:2)  ! Return A, B, C, or D
             else if (escape_seq(1:1) >= 'a' .and. escape_seq(1:1) <= 'z') then
                 ! Alt-letter sequence: ESC followed by letter

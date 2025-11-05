@@ -299,7 +299,13 @@ contains
                 else
                     mode = 'normal'
                 end if
-                needs_full_redraw = .true.
+                ! Temporarily restore terminal to flush output properly
+                call execute_command_line('stty sane < /dev/tty')
+                call clear_screen()
+                call draw_interactive_tree(tree_root, items, n_items, selected, &
+                                           repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                ! Restore cbreak mode
+                call enable_raw_mode()
                 cycle  ! Skip rest of key handling
             end if
 
@@ -307,7 +313,13 @@ contains
             if (key == achar(27)) then
                 if (mode == 'git') then
                     mode = 'normal'
-                    needs_full_redraw = .true.
+                    ! Temporarily restore terminal to flush output properly
+                    call execute_command_line('stty sane < /dev/tty')
+                    call clear_screen()
+                    call draw_interactive_tree(tree_root, items, n_items, selected, &
+                                               repo_name, branch_name, viewport_offset, visible_items, top_padding, mode)
+                    ! Restore cbreak mode
+                    call enable_raw_mode()
                     cycle
                 end if
                 ! In normal mode, ESC does nothing for now
