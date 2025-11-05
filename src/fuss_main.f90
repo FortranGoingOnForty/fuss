@@ -37,9 +37,11 @@ contains
         logical, intent(out) :: show_all, interactive
         integer :: i, nargs
         character(len=256) :: arg
+        logical :: print_only
 
         show_all = .false.
-        interactive = .false.
+        interactive = .true.  ! Interactive is now the default
+        print_only = .false.
         nargs = command_argument_count()
 
         do i = 1, nargs
@@ -54,12 +56,19 @@ contains
                 show_all = .true.
             else if (trim(arg) == '-i' .or. trim(arg) == '--interactive') then
                 interactive = .true.
+            else if (trim(arg) == '-p' .or. trim(arg) == '--print') then
+                print_only = .true.
             else
                 print '(A)', 'Error: Unknown option: ' // trim(arg)
                 print '(A)', 'Run ''fuss --help'' for usage information'
                 stop 1
             end if
         end do
+
+        ! If print_only is set, disable interactive mode
+        if (print_only) then
+            interactive = .false.
+        end if
     end subroutine parse_arguments
 
     subroutine print_version()
@@ -78,7 +87,7 @@ contains
         print '(A)', 'OPTIONS:'
         print '(A)', '  -h, --help       Show this'
         print '(A)', '  -v, --version    Show version'
-        print '(A)', '  -i               Interactive mode (default)'
+        print '(A)', '  -p, --print      Print tree and exit (non-interactive)'
         print '(A)', '  -a, --all        Show all files, not just dirty'
         print '(A)', ''
         print '(A)', 'KEYS:'
