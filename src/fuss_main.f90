@@ -349,6 +349,24 @@ contains
                 cycle  ! Skip rest of key handling
             end if
 
+            ! Check for alt-s to show git status (available in both modes)
+            ! alt-s is encoded as achar(1 + ichar('s') - ichar('a')) = achar(19)
+            if (key == achar(19)) then
+                call show_status_view()
+                needs_full_redraw = .true.
+                cycle
+            end if
+
+            ! Check for alt-v to view file (available in both modes)
+            ! alt-v is encoded as achar(1 + ichar('v') - ichar('a')) = achar(22)
+            if (key == achar(22)) then
+                if (items(selected)%is_file) then
+                    call view_file(items(selected)%path)
+                    needs_full_redraw = .true.
+                end if
+                cycle
+            end if
+
             ! Handle ESC key - exit git mode or clear search
             if (key == achar(27)) then
                 if (mode == 'git') then
@@ -529,11 +547,6 @@ contains
                                             hide_dotfiles, selected, running, force_refresh=.true.)
                         needs_full_redraw = .true.
                 end if
-            case ('s')  ! Show git status (lowercase)
-                if (mode == 'git') then
-                    call show_status_view()
-                    needs_full_redraw = .true.
-                end if
             case ('p')  ! Push (lowercase)
                 if (mode == 'git') then
                     call push_prompt()
@@ -586,9 +599,14 @@ contains
                     call git_diff_file(items(selected)%path, items(selected)%has_incoming)
                     needs_full_redraw = .true.
                 end if
-            case ('c')  ! View file contents (cat/bat/less)
+            case ('c')  ! View file contents (git mode shortcut; use alt-v in normal mode)
                 if (mode == 'git' .and. items(selected)%is_file) then
                     call view_file(items(selected)%path)
+                    needs_full_redraw = .true.
+                end if
+            case ('s')  ! Show git status (git mode shortcut; use alt-s in normal mode)
+                if (mode == 'git') then
+                    call show_status_view()
                     needs_full_redraw = .true.
                 end if
             case ('w')  ! Git blame (who changed this line)
